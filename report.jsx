@@ -1787,7 +1787,10 @@
           <Section n={videoUrl ? 6 : 5} title="핵심 키네매틱스" subtitle="6종 핵심 동작 지표">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <KinCard title="Max ER (어깨 외회전)" mean={summary.maxER?.mean} sd={summary.maxER?.sd}
-                lo={BBLAnalysis.ELITE.maxER.lo} hi={BBLAnalysis.ELITE.maxER.hi} unit="°" decimals={1}/>
+                lo={BBLAnalysis.ELITE.maxER.lo} hi={BBLAnalysis.ELITE.maxER.hi} unit="°" decimals={1}
+                hint={summary.maxER?.outlierCount > 0
+                  ? `⚠ ${summary.maxER.outlierCount}개 trial 제외 (${summary.maxER.n}개 사용)`
+                  : null}/>
               <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
                 lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
                 hint="골반-몸통 분리각"/>
@@ -1801,6 +1804,53 @@
               <KinCard title="Arm slot" mean={summary.armSlotAngle?.mean} sd={summary.armSlotAngle?.sd}
                 lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
             </div>
+
+            {/* Per-trial Max ER diagnostic — shown when outliers detected or SD is suspiciously large */}
+            {(() => {
+              const er = summary.maxER;
+              if (!er) return null;
+              const showDiag = er.outlierCount > 0 || (er.sd != null && er.sd > 20);
+              if (!showDiag) return null;
+              return (
+                <div className="mt-3 p-3 rounded border" style={{ borderColor: '#f59e0b66', background: '#1f1408' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span style={{ color: '#fbbf24', fontSize: '14px' }}>⚠</span>
+                    <span className="text-[12px] font-bold" style={{ color: '#fbbf24' }}>
+                      Max ER 진단 — 일부 trial 값이 비정상적으로 다름
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] mb-2" style={{ color: '#e2e8f0' }}>
+                    중앙값(median): <b>{er.median?.toFixed(1)}°</b>
+                    {er.outlierCount > 0 && (
+                      <span> · outlier {er.outlierCount}개 자동 제외 후 평균 표시</span>
+                    )}
+                  </div>
+                  <div className="text-[10.5px] mb-1.5" style={{ color: '#94a3b8' }}>각 trial의 Max ER:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(er.allVals || er.vals || []).map((v, i) => {
+                      const isOutlier = (er.outliers || []).some(o => o.index === i);
+                      return (
+                        <div key={i}
+                          className="px-2 py-1 rounded text-[11px] tabular-nums"
+                          style={{
+                            background: isOutlier ? '#7f1d1d' : '#0f1729',
+                            color: isOutlier ? '#fecaca' : '#cbd5e1',
+                            border: `1px solid ${isOutlier ? '#dc2626' : '#1e2a47'}`
+                          }}>
+                          T{i+1}: {v.toFixed(1)}° {isOutlier && '✗'}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[10.5px] mt-2 leading-relaxed" style={{ color: '#94a3b8' }}>
+                    <b>가능한 원인:</b> ① 일부 trial에서 Uplift CSV의 ER 컬럼이 angle wraparound (예: 195°가 -165°로 표기) →
+                    이번 버전부터 자동 unwrap 처리. ② 해당 trial에서 Uplift 트래킹 일시 손실. ③ 다른 구종(변화구)이
+                    섞여 자세 차이가 큼.
+                  </div>
+                </div>
+              );
+            })()}
+
             {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
             <InfoBox items={[
               {

@@ -68,6 +68,42 @@
     const m = mean(a), s = sd(a);
     return { mean: m, sd: s, cv: cv(a), min: Math.min(...a), max: Math.max(...a), n: a.length, vals: a };
   }
+  // Outlier-robust aggregation using median + MAD (median absolute deviation)
+  // Flags any value > 3 × MAD from median as an outlier and excludes it from
+  // mean/SD/CV, but reports the count and original values for transparency.
+  function aggRobust(arr) {
+    const a = nums(arr);
+    if (!a.length) return null;
+    if (a.length < 3) {
+      // Too few trials to detect outliers reliably — fall back to plain agg
+      const r = agg(a);
+      if (r) { r.outliers = []; r.outlierCount = 0; }
+      return r;
+    }
+    const sorted = [...a].sort((x, y) => x - y);
+    const med = sorted[Math.floor(sorted.length / 2)];
+    const deviations = a.map(v => Math.abs(v - med));
+    const sortedDev = [...deviations].sort((x, y) => x - y);
+    const mad = sortedDev[Math.floor(sortedDev.length / 2)];
+    // Robust SD estimate: MAD × 1.4826
+    const robustSD = mad * 1.4826;
+    // Outlier threshold: > 3 × robustSD from median (or absolute 30° if SD is tiny)
+    const threshold = Math.max(3 * robustSD, 5);
+    const outliers = [];
+    const cleaned = [];
+    a.forEach((v, i) => {
+      if (Math.abs(v - med) > threshold) outliers.push({ index: i, value: v });
+      else cleaned.push(v);
+    });
+    const m = mean(cleaned), s = sd(cleaned);
+    return {
+      mean: m, sd: s, cv: cv(cleaned),
+      min: Math.min(...cleaned), max: Math.max(...cleaned),
+      n: cleaned.length, vals: cleaned,
+      outliers, outlierCount: outliers.length,
+      median: med, allVals: a
+    };
+  }
   function pct(num, denom) { return denom > 0 ? (num/denom)*100 : 0; }
   function safeNum(v) { return (v == null || isNaN(v) || !isFinite(v)) ? null : v; }
   function argmaxAbs(rows, col) {
@@ -152,13 +188,32 @@
     // This matches the convention used by most lab reports (forearm rotates
     // posteriorly around humerus from "neutral" position at FC to "layback"
     // position just before release).
+    //
+    // Robustness: Uplift's Euler-decomposed ER column can occasionally wrap
+    // around (e.g. 195° appearing as -165° = 195 - 360). We unwrap by
+    // detecting jumps > 180° between adjacent frames and adding ±360° to
+    // restore continuity, then take the max.
     const erCol = `${armSide}_shoulder_external_rotation`;
+    const erUnwrapped = [];
+    let prev = null, offset = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const raw = rows[i][erCol];
+      if (raw == null || isNaN(raw)) { erUnwrapped.push(null); continue; }
+      if (prev != null) {
+        const diff = (raw + offset) - prev;
+        if (diff > 180) offset -= 360;
+        else if (diff < -180) offset += 360;
+      }
+      const adj = raw + offset;
+      erUnwrapped.push(adj);
+      prev = adj;
+    }
     let merVal = -Infinity, merIdx = -1;
     const merWinStart = Math.max(0, fcRow);
     const merWinEnd   = Math.min(rows.length, brRow + 1);
     for (let i = merWinStart; i < merWinEnd; i++) {
-      const v = rows[i][erCol];
-      if (v != null && !isNaN(v) && v > merVal) { merVal = v; merIdx = i; }
+      const v = erUnwrapped[i];
+      if (v != null && v > merVal) { merVal = v; merIdx = i; }
     }
     const maxER = merVal > -Infinity ? merVal : null;
 
@@ -718,7 +773,7 @@
       ptLagMs:           agg(perTrialStats.map(s => s.ptLagMs)),
       taLagMs:           agg(perTrialStats.map(s => s.taLagMs)),
       fcBrMs:            agg(perTrialStats.map(s => s.fcBrMs)),
-      maxER:        agg(perTrialStats.map(s => s.maxER)),
+      maxER:        aggRobust(perTrialStats.map(s => s.maxER)),
       maxXFactor:        agg(perTrialStats.map(s => s.maxXFactor)),
       bodyHeight:        agg(perTrialStats.map(s => s.bodyHeight)),
       strideLength:      agg(perTrialStats.map(s => s.strideLength)),
