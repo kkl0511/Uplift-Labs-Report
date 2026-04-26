@@ -1,0 +1,130 @@
+/* BBL · Pitcher Input — custom styles
+ * Pretendard for Korean readability + tabular numerics for data fields
+ */
+
+html, body {
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto,
+    'Helvetica Neue', sans-serif;
+}
+
+.bbl-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  color: #0f172a;
+  background: white;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+}
+
+.bbl-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.bbl-input-readonly {
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 500;
+}
+
+.bbl-input-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Smooth fade for first paint to avoid Tailwind CDN flash */
+#root {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ===== v7 silhouette charts dark theme ===== */
+.energy-silhouette {
+  background: linear-gradient(180deg, #0d1628 0%, #0a1122 100%);
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 8px 12px 12px;
+  position: relative;
+}
+.silhouette-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  aspect-ratio: 800 / 520;
+}
+.silhouette-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #1e293b;
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: 'Pretendard', system-ui, -apple-system, sans-serif;
+}
+.silhouette-legend .leg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.silhouette-legend .dot {
+  display: inline-block;
+  width: 18px;
+  height: 6px;
+  border-radius: 3px;
+}
+.silhouette-legend .note {
+  color: #64748b;
+  font-style: italic;
+  margin-left: auto;
+}
+
+/* Layback meter centered on dark card */
+.layback-meter-card {
+  background: linear-gradient(180deg, #0d1628 0%, #0a1122 100%);
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ===== Print styles for the report ===== */
+@media print {
+  @page {
+    size: A4;
+    margin: 8mm 10mm;
+  }
+  html, body { background: white !important; }
+  body { font-size: 10pt; }
+  /* Avoid breaking sections across pages where possible */
+  section { page-break-inside: avoid; break-inside: avoid; }
+  /* Hide interactive controls */
+  button, input[type="file"], video::-webkit-media-controls-fullscreen-button {
+    display: none !important;
+  }
+  /* Smaller padding and tighter section spacing */
+  section > div:last-child { padding: 8pt 10pt !important; }
+  /* Show all video frames as still image preview */
+  video {
+    max-height: 280px !important;
+  }
+  /* Disable all SVG animations on print */
+  .silhouette-svg animate,
+  .silhouette-svg animateMotion,
+  .silhouette-svg animateTransform { display: none !important; }
+}

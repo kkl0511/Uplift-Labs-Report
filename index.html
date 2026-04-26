@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>BBL · 투수 정보 입력</title>
+  <meta name="description" content="국민대학교 BBL 투수 데이터 입력 도구"/>
+
+  <!-- Pretendard (Korean optimized font) -->
+  <link rel="stylesheet" as="style" crossorigin
+        href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css"/>
+
+  <!-- Tailwind Play CDN (compiles utility classes at runtime) -->
+  <script src="https://cdn.tailwindcss.com?v=3.4.16"></script>
+
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="style.css?v=1"/>
+</head>
+<body class="antialiased">
+  <div id="root"></div>
+
+  <!-- React + ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+
+  <!-- Babel standalone (transforms JSX in-browser) -->
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+  <!-- PapaParse (CSV parser; exposes global `Papa`) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <!-- idb-keyval (IndexedDB wrapper for persistent local save; exposes global `idbKeyval`) -->
+  <script src="https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/umd.js"></script>
+
+  <!-- BBL Analysis module (pure JS, exposes window.BBLAnalysis) -->
+  <script src="analysis.js?v=2"></script>
+
+  <!-- v7-style chart components (depends on React; exposes window.BBLCharts) -->
+  <script type="text/babel" data-presets="react" src="v7_charts.jsx?v=2"></script>
+
+  <!-- Report view (depends on React + BBLAnalysis + BBLCharts; exposes window.ReportView) -->
+  <script type="text/babel" data-presets="react" src="report.jsx?v=3"></script>
+
+  <!-- App (input form + router) -->
+  <script type="text/babel" data-presets="react" src="app.jsx?v=2"></script>
+</body>
+</html>
