@@ -101,21 +101,231 @@
   }
 
   // ============================================================
+  // Plain-language summarizers — convert numbers to coach-friendly text
+  // ============================================================
+  function SummaryBox({ tone, title, text }) {
+    const icons = { good: '✓', mid: '!', bad: '⚠' };
+    return (
+      <div className={`summary-box ${tone}`}>
+        <div className="summary-icon">{icons[tone] || '·'}</div>
+        <div className="flex-1">
+          <div className="summary-label">{title || '한눈에 보기'}</div>
+          <div className="summary-text">{text}</div>
+        </div>
+      </div>
+    );
+  }
+
+  function summarizeSequencing(seq) {
+    const ptM = seq.ptLag.mean;
+    const taM = seq.taLag.mean;
+    const ptOK = ptM >= 25 && ptM <= 70;
+    const taOK = taM >= 25 && taM <= 70;
+    const v = seq.sequenceViolations;
+    const n = seq.n;
+    if (v > 0) {
+      return { tone: 'bad', text: `${n}개 투구 중 ${v}개에서 정상 회전 순서(골반→몸통→팔)가 깨졌습니다. 팔이 몸통보다 먼저 가속되면 어깨·팔꿈치 부하가 크게 늘어납니다. 영상에서 분절 시작 시점을 점검해주세요.` };
+    }
+    if (ptOK && taOK) {
+      return { tone: 'good', text: `골반 → 몸통 → 팔로 이어지는 회전 순서가 ${n}개 투구 모두 정상이고, 분절 간 타이밍(${Math.round(ptM)}ms / ${Math.round(taM)}ms)이 이상적인 범위(25~70ms) 안에 있습니다. 채찍처럼 순차 가속이 잘 일어나고 있어요.` };
+    }
+    const issues = [];
+    if (!ptOK) issues.push(ptM < 25 ? '골반·몸통이 거의 동시에 회전 (분리 부족)' : `골반→몸통 간격이 ${Math.round(ptM)}ms로 너무 김`);
+    if (!taOK) issues.push(taM < 25 ? '몸통·팔 간격이 거의 없음' : `몸통→팔 간격이 ${Math.round(taM)}ms로 너무 김`);
+    return { tone: 'mid', text: `회전 순서는 정상이지만 타이밍에 보완점이 있어요: ${issues.join(' · ')}. 각 분절 간 25~70ms가 이상적입니다.` };
+  }
+
+  function summarizeAngular(summary) {
+    const E = BBLAnalysis.ELITE;
+    const p = summary.peakPelvisVel?.mean || 0;
+    const t = summary.peakTrunkVel?.mean || 0;
+    const a = summary.peakArmVel?.mean || 0;
+    const status = (v, ref) => v >= ref.elite ? '엘리트' : v >= ref.good ? '양호' : '부족';
+    const sP = status(p, E.peakPelvis), sT = status(t, E.peakTrunk), sA = status(a, E.peakArm);
+    const allElite = sP === '엘리트' && sT === '엘리트' && sA === '엘리트';
+    const anyShort = sP === '부족' || sT === '부족' || sA === '부족';
+    if (allElite) {
+      return { tone: 'good', text: `골반 ${Math.round(p)}°/s · 몸통 ${Math.round(t)}°/s · 팔 ${Math.round(a)}°/s — 세 분절 모두 엘리트 수준의 회전 속도입니다.` };
+    }
+    if (anyShort) {
+      const shorts = [];
+      if (sP === '부족') shorts.push(`골반(${Math.round(p)}°/s)`);
+      if (sT === '부족') shorts.push(`몸통(${Math.round(t)}°/s)`);
+      if (sA === '부족') shorts.push(`팔(${Math.round(a)}°/s)`);
+      return { tone: 'bad', text: `${shorts.join(' · ')}이(가) 기준 미달입니다. 회전 속도 부족은 구속 한계의 주요 원인이에요. 약한 분절이 어디인지에 따라 트레이닝 우선순위가 달라집니다.` };
+    }
+    return { tone: 'mid', text: `골반 ${sP} · 몸통 ${sT} · 팔 ${sA} — 일부 분절이 엘리트 기준에 못 미칩니다. 회전 속도를 더 끌어올릴 여지가 있어요.` };
+  }
+
+  function summarizeEnergy(energy) {
+    const ptM = energy.etiPT?.mean || 0;
+    const taM = energy.etiTA?.mean || 0;
+    const tier = (v, eliteThr, midThr) => v >= eliteThr ? '엘리트' : v >= midThr ? '양호' : '누수';
+    const ptT = tier(ptM, 1.5, 1.3);
+    const taT = tier(taM, 1.7, 1.4);
+    const leak = energy.leakRate;
+    if (ptT === '엘리트' && taT === '엘리트') {
+      return { tone: 'good', text: `골반→몸통(×${ptM.toFixed(2)}) 그리고 몸통→팔(×${taM.toFixed(2)}) 모두 엘리트급 가속 비율입니다. 각 분절이 다음 분절을 강하게 채찍질하고 있어요. 누수율 ${leak.toFixed(0)}%.` };
+    }
+    if (ptT === '누수' || taT === '누수') {
+      const where = [];
+      if (ptT === '누수') where.push(`골반→몸통 (×${ptM.toFixed(2)})`);
+      if (taT === '누수') where.push(`몸통→팔 (×${taM.toFixed(2)}, 어깨 부하↑)`);
+      return { tone: 'bad', text: `${where.join(' · ')}에서 에너지 누수가 감지됩니다. 다음 분절로 가속이 충분히 이뤄지지 않아 구속 손실 + 부상 위험이 있어요. 종합 누수율 ${leak.toFixed(0)}%.` };
+    }
+    return { tone: 'mid', text: `골반→몸통 ${ptT} (×${ptM.toFixed(2)}) · 몸통→팔 ${taT} (×${taM.toFixed(2)}). 가속 비율이 엘리트 수준에는 못 미치지만 누수는 없는 양호한 상태입니다. 종합 누수율 ${leak.toFixed(0)}%.` };
+  }
+
+  function summarizeKinematics(summary, armSlotType) {
+    const E = BBLAnalysis.ELITE;
+    const inRange = (v, lo, hi) => v != null && v >= lo && v <= hi;
+    const lay = summary.maxLayback?.mean;
+    const xf = summary.maxXFactor?.mean;
+    const tilt = summary.trunkForwardTilt?.mean;
+    const stride = summary.strideLength?.mean;
+    const issues = [];
+    if (lay != null && lay < E.maxLayback.lo) issues.push(`Layback(${Math.round(lay)}°)이 부족 — 어깨 외회전 가동성 점검`);
+    if (xf != null && xf < E.maxXFactor.lo) issues.push(`X-factor(${Math.round(xf)}°)가 작음 — 골반-몸통 분리 부족`);
+    if (tilt != null && tilt < E.trunkForwardTilt.lo) issues.push(`전방 기울기(${Math.round(tilt)}°)가 낮음 — 릴리스 포인트 낮을 위험`);
+    if (issues.length === 0) {
+      return { tone: 'good', text: `Layback · X-factor · 몸통 기울기 · Stride 등 핵심 지표가 모두 표준 범위 안에 있습니다. ${armSlotType ? `Arm slot은 ${armSlotType} 타입.` : ''}` };
+    }
+    if (issues.length >= 3) {
+      return { tone: 'bad', text: `${issues.length}개 핵심 지표가 표준 범위 밖에 있습니다 — ${issues.join(' / ')}.` };
+    }
+    return { tone: 'mid', text: `핵심 지표 중 ${issues.length}곳에 보완점이 있습니다: ${issues.join(' · ')}.` };
+  }
+
+  // Friendly labels for the 12 fault flags
+  const FAULT_LABELS_FRIENDLY = {
+    sway:          { ko: '몸통 좌우 흔들림',      desc: '투구 중 체중 중심이 좌우로 흔들림' },
+    hangingBack:   { ko: '체중이 뒷다리에 남음',  desc: '하체 회전이 늦거나 멈춤' },
+    flyingOpen:    { ko: '몸통 조기 회전',        desc: '릴리스 전 몸통이 미리 열림' },
+    kneeCollapse:  { ko: '앞 무릎 안쪽 무너짐',   desc: '앞 무릎이 안쪽으로 꺾이며 안정성 손실' },
+    highHand:      { ko: '글러브 손 너무 높음',   desc: '비투구 손 위치 과도하게 높음' },
+    earlyRelease:  { ko: '조기 릴리스',           desc: '공을 너무 일찍 놓아 제구 흔들림' },
+    elbowHike:     { ko: '팔꿈치 솟구침',         desc: '팔꿈치가 어깨선보다 위로' },
+    armDrag:       { ko: '팔 끌림',               desc: '팔이 몸통 회전을 따라가지 못함' },
+    forearmFlyout: { ko: '팔뚝 옆으로 빠짐',      desc: '회전 평면에서 팔뚝이 이탈' },
+    lateRise:      { ko: '몸통 늦게 일어남',      desc: '상체가 너무 늦게 직립' },
+    gettingOut:    { ko: '몸 앞쪽 쏠림',          desc: '체중이 앞쪽으로 너무 빠짐' },
+    closingFB:     { ko: '앞발 정렬 어긋남',      desc: '앞 발이 너무 닫히거나 열림' }
+  };
+
+  function summarizeFaults(faultRates, factors) {
+    const HIGH = 50, LOW = 10;
+    const items = Object.entries(faultRates).map(([k, v]) => ({ k, ...v }));
+    const high = items.filter(i => i.rate >= HIGH);
+    const med  = items.filter(i => i.rate < HIGH && i.rate > LOW);
+    const factorD = factors.filter(f => f.grade === 'D');
+    if (high.length === 0 && factorD.length === 0) {
+      return { tone: 'good', text: `13개 결함 항목 모두 ${LOW}% 미만의 낮은 발생률입니다. 7-요인 등급에서도 D가 없어 전반적으로 안정된 동작 패턴이에요.` };
+    }
+    if (high.length > 0 || factorD.length > 0) {
+      const parts = [];
+      if (high.length > 0) parts.push(`${high.map(i => FAULT_LABELS_FRIENDLY[i.k]?.ko || i.k).join(' · ')}이(가) ${HIGH}% 이상 발생`);
+      if (factorD.length > 0) parts.push(`${factorD.map(f => f.name.replace(/^[①②③④⑤⑥⑦]\s*/, '')).join(' · ') } 등급 D`);
+      return { tone: 'bad', text: `반복적으로 나타나는 결함이 있어 우선 개선이 필요합니다 — ${parts.join(' / ')}. 영상 분석으로 구체적 지점을 확인해보세요.` };
+    }
+    return { tone: 'mid', text: `${med.length}개 항목에서 간헐적 결함(10~50%)이 보입니다: ${med.slice(0, 3).map(i => FAULT_LABELS_FRIENDLY[i.k]?.ko || i.k).join(', ')}. 일관성을 더 높여볼 여지가 있어요.` };
+  }
+
+  function summarizeCommand(command) {
+    const grade = command.overall;
+    const weak = command.weakest;
+    if (grade === 'A') {
+      return { tone: 'good', text: `6개 측정 모두 일관성이 높아 종합 등급 A입니다. 매 투구마다 릴리스 자세가 거의 같다는 뜻이고, 이는 안정된 제구의 기반이 됩니다.` };
+    }
+    if (grade === 'B') {
+      const w = weak.length > 0 ? ` 다만 ${weak.map(a => a.name).join(', ')} 일관성이 다소 떨어져 더 다듬을 여지가 있어요.` : '';
+      return { tone: 'mid', text: `대부분의 동작이 일관적이지만 종합 등급 B입니다.${w}` };
+    }
+    return { tone: 'bad', text: `투구마다 릴리스 자세가 크게 변하고 있어 종합 등급 ${grade}입니다 — 약점: ${weak.map(a => a.name).join(', ')}. 같은 곳을 반복해서 던지기 어려운 상태이며, 동작 일관성 강화 드릴이 필요합니다.` };
+  }
+
+  // ============================================================
+  // Video Player — speed control + frame stepping + muted
+  // ============================================================
+  function VideoPlayer({ src }) {
+    const videoRef = useRef(null);
+    const [speed, setSpeed] = useState(1);
+    const [paused, setPaused] = useState(true);
+    const FRAME_TIME = 1 / 30;
+
+    const setRate = (r) => {
+      setSpeed(r);
+      if (videoRef.current) videoRef.current.playbackRate = r;
+    };
+    const stepFrame = (forward) => {
+      const v = videoRef.current;
+      if (!v) return;
+      if (!v.paused) v.pause();
+      v.currentTime = Math.max(0, v.currentTime + (forward ? FRAME_TIME : -FRAME_TIME));
+    };
+    const togglePlay = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      if (v.paused) v.play();
+      else v.pause();
+    };
+
+    return (
+      <div>
+        <video
+          ref={videoRef}
+          src={src}
+          muted
+          controls
+          className="w-full max-h-[460px] rounded-md"
+          style={{ background: '#000' }}
+          onPlay={() => setPaused(false)}
+          onPause={() => setPaused(true)}
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5 items-center print:hidden">
+          <span className="text-[10.5px] uppercase tracking-wider font-bold mr-1" style={{ color: '#94a3b8' }}>배속</span>
+          {[0.1, 0.25, 0.5, 1].map(r => (
+            <button key={r} onClick={() => setRate(r)}
+              className="px-2.5 py-1 text-[12px] font-semibold rounded border transition"
+              style={speed === r
+                ? { background: '#2563eb', color: 'white', borderColor: '#2563eb' }
+                : { background: '#1a233d', color: '#cbd5e1', borderColor: '#475569' }}>
+              {r}×
+            </button>
+          ))}
+          <span className="text-[10.5px] uppercase tracking-wider font-bold mx-1 ml-3" style={{ color: '#94a3b8' }}>프레임</span>
+          <button onClick={() => stepFrame(false)}
+            className="px-2.5 py-1 text-[12px] font-semibold rounded border"
+            style={{ background: '#1a233d', color: '#cbd5e1', borderColor: '#475569' }}>
+            ◀ 이전
+          </button>
+          <button onClick={togglePlay}
+            className="px-2.5 py-1 text-[12px] font-semibold rounded border"
+            style={{ background: '#2563eb', color: 'white', borderColor: '#2563eb' }}>
+            {paused ? '▶ 재생' : '❚❚ 정지'}
+          </button>
+          <button onClick={() => stepFrame(true)}
+            className="px-2.5 py-1 text-[12px] font-semibold rounded border"
+            style={{ background: '#1a233d', color: '#cbd5e1', borderColor: '#475569' }}>
+            다음 ▶
+          </button>
+          <span className="ml-auto text-[10.5px]" style={{ color: '#94a3b8' }}>음소거 · 프레임 1/30초씩 이동</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
   // Layout primitives
   // ============================================================
   function Section({ title, subtitle, n, children }) {
     return (
-      <section className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 bg-gradient-to-b from-slate-50 to-white border-b border-slate-200 flex items-baseline justify-between">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[11px] font-bold tracking-[0.2em] text-blue-600">
-              {n != null && `${String(n).padStart(2, '0')} ·`}
-            </span>
-            <h2 className="text-sm font-bold text-slate-800">{title}</h2>
-            {subtitle && (<span className="text-[11px] text-slate-500 ml-2">{subtitle}</span>)}
-          </div>
+      <section className="bbl-section">
+        <div className="bbl-section-head">
+          <span className="bbl-section-num">{n != null ? String(n).padStart(2, '0') : ''}</span>
+          <h2 className="bbl-section-title">{title}</h2>
+          {subtitle && (<span className="bbl-section-subtitle">{subtitle}</span>)}
         </div>
-        <div className="p-5">{children}</div>
+        <div className="bbl-section-body">{children}</div>
       </section>
     );
   }
@@ -143,7 +353,7 @@
           return (
             <g key={t}>
               <line x1={x} y1={0} x2={x} y2={(BAR_H + GAP) * perTrial.length} stroke="#e2e8f0" strokeDasharray="2,2"/>
-              <text x={x} y={(BAR_H + GAP) * perTrial.length + 14} fontSize="10" textAnchor="middle" fill="#64748b">{v.toFixed(0)}</text>
+              <text x={x} y={(BAR_H + GAP) * perTrial.length + 14} fontSize="10" textAnchor="middle" fill="#94a3b8">{v.toFixed(0)}</text>
             </g>
           );
         })}
@@ -166,7 +376,7 @@
           );
           return (
             <g key={i}>
-              <text x={75} y={y + BAR_H / 2 + 4} fontSize="11" textAnchor="end" fill="#475569">{t.label}</text>
+              <text x={75} y={y + BAR_H / 2 + 4} fontSize="11" textAnchor="end" fill="#94a3b8">{t.label}</text>
               <rect x={80} y={y} width={xScale(v) - 80} height={BAR_H} fill="#3b82f6" opacity="0.85" rx="2"/>
               <text x={xScale(v) + 4} y={y + BAR_H / 2 + 4} fontSize="11" fontWeight="600" fill="#1e40af">{fmt.n1(v)}</text>
             </g>
@@ -237,7 +447,7 @@
 
         {/* status */}
         <g transform="translate(10, 100)">
-          <text fontSize="11" fill="#475569" fontWeight="600">
+          <text fontSize="11" fill="#94a3b8" fontWeight="600">
             {m.sequenceViolations === 0
               ? `✓ ${m.n}/${m.n} 트라이얼 정상 분절 시퀀스 (Pelvis→Trunk→Arm)`
               : `⚠ ${m.n - m.sequenceViolations}/${m.n} 정상 · ${m.sequenceViolations}개 시퀀스 위반`}
@@ -291,10 +501,10 @@
                   stroke="#0f172a" strokeWidth="1.5"/>
               )}
               {/* value label */}
-              <text x={xScale(m) + 6} y={y + ROW_H / 2 + 4} fontSize="11" fontWeight="700" fill="#0f172a">
+              <text x={xScale(m) + 6} y={y + ROW_H / 2 + 4} fontSize="11" fontWeight="700" fill="#f1f5f9">
                 {fmt.n0(m)}{sd ? ` ±${fmt.n0(sd)}` : ''}
               </text>
-              <text x={xScale(m) + 6} y={y + ROW_H / 2 + 16} fontSize="9" fill="#64748b">°/s</text>
+              <text x={xScale(m) + 6} y={y + ROW_H / 2 + 16} fontSize="9" fill="#94a3b8">°/s</text>
             </g>
           );
         })}
@@ -340,7 +550,7 @@
                 {fmt.n0(b.value)}
               </text>
               <text x={b.x + 50} y={y + h + 16} fontSize="11" fontWeight="700" fill={b.color} textAnchor="middle">{b.label}</text>
-              <text x={b.x + 50} y={y + h + 30} fontSize="10" fill="#64748b" textAnchor="middle">°/s</text>
+              <text x={b.x + 50} y={y + h + 30} fontSize="10" fill="#94a3b8" textAnchor="middle">°/s</text>
             </g>
           );
         })}
@@ -362,7 +572,7 @@
                 ×{fmt.n2(a.etiM)}
               </text>
               {a.etiSd != null && (
-                <text x={(a.x1 + a.x2) / 2} y={106} fontSize="9" fill="#64748b" textAnchor="middle">
+                <text x={(a.x1 + a.x2) / 2} y={106} fontSize="9" fill="#94a3b8" textAnchor="middle">
                   ± {fmt.n2(a.etiSd)}
                 </text>
               )}
@@ -375,7 +585,7 @@
         {/* leak rate badge */}
         <g transform="translate(10, 150)">
           <rect width={W - 20} height="24" fill="#f8fafc" rx="4" stroke="#e2e8f0"/>
-          <text x={10} y={16} fontSize="11" fontWeight="600" fill="#475569">
+          <text x={10} y={16} fontSize="11" fontWeight="600" fill="#94a3b8">
             종합 에너지 누수율
           </text>
           <text x={W - 30} y={16} fontSize="13" fontWeight="700" textAnchor="end"
@@ -393,9 +603,9 @@
   function KinCard({ title, mean, sd, lo, hi, unit, decimals = 1, hint }) {
     const inRange = mean != null && mean >= lo && mean <= hi;
     const status = mean == null ? '—' : (inRange ? '엘리트 범위' : (mean < lo ? '낮음' : '높음'));
-    const statusColor = mean == null ? '#94a3b8' : inRange ? '#059669' : '#d97706';
+    const statusColor = mean == null ? '#94a3b8' : inRange ? '#6ee7b7' : '#fbbf24';
+    const tone = mean == null ? '' : inRange ? 'stat-good' : 'stat-mid';
 
-    // Bar visualization
     const barMin = lo * 0.7;
     const barMax = hi * 1.3;
     const xPct = mean != null ? Math.min(100, Math.max(0, ((mean - barMin) / (barMax - barMin)) * 100)) : null;
@@ -403,27 +613,26 @@
     const hiPct = ((hi - barMin) / (barMax - barMin)) * 100;
 
     return (
-      <div className="border border-slate-200 rounded-md p-3">
-        <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase">{title}</div>
+      <div className={`stat-card ${tone}`}>
+        <div className="stat-label">{title}</div>
         <div className="mt-1 flex items-baseline gap-1.5">
-          <span className="text-xl font-bold text-slate-900 tabular-nums">
+          <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
             {mean != null ? mean.toFixed(decimals) : '—'}
           </span>
-          {sd != null && (<span className="text-[11px] text-slate-500 tabular-nums">±{sd.toFixed(decimals)}</span>)}
-          <span className="text-[10px] text-slate-500 ml-0.5">{unit}</span>
+          {sd != null && (<span className="text-[11.5px] tabular-nums" style={{ color: '#94a3b8' }}>±{sd.toFixed(decimals)}</span>)}
+          <span className="text-[11px] ml-0.5" style={{ color: '#94a3b8' }}>{unit}</span>
         </div>
-        {/* Range bar */}
-        <div className="mt-2 relative h-3 bg-slate-100 rounded-sm">
-          <div className="absolute inset-y-0 bg-emerald-200" style={{ left: `${loPct}%`, width: `${hiPct - loPct}%` }}/>
+        <div className="mt-2 relative h-2.5 rounded-sm" style={{ background: '#0a0e1a' }}>
+          <div className="absolute inset-y-0 rounded-sm" style={{ left: `${loPct}%`, width: `${hiPct - loPct}%`, background: 'rgba(16,185,129,0.35)' }}/>
           {xPct != null && (
-            <div className="absolute -inset-y-0.5 w-0.5 bg-slate-900" style={{ left: `${xPct}%` }}/>
+            <div className="absolute -inset-y-0.5 w-0.5" style={{ left: `${xPct}%`, background: '#fbbf24' }}/>
           )}
         </div>
-        <div className="mt-1.5 flex items-center justify-between text-[9px] text-slate-500">
-          <span className="tabular-nums">{lo}~{hi}{unit}</span>
+        <div className="mt-1.5 flex items-center justify-between text-[10px]">
+          <span className="tabular-nums" style={{ color: '#94a3b8' }}>{lo}~{hi}{unit}</span>
           <span className="font-semibold" style={{ color: statusColor }}>{status}</span>
         </div>
-        {hint && (<div className="mt-1 text-[10px] text-slate-500">{hint}</div>)}
+        {hint && (<div className="mt-1 text-[10.5px]" style={{ color: '#cbd5e1' }}>{hint}</div>)}
       </div>
     );
   }
@@ -432,23 +641,10 @@
   // Fault grid (13 raw flags + 7-factor summary)
   // ============================================================
   function FaultGrid({ faultRates, factors }) {
-    const FAULT_LABELS = {
-      sway: '체중 이동 흔들림',
-      hangingBack: '하체 못 따라옴',
-      flyingOpen: '몸통 일찍 열림',
-      kneeCollapse: '앞 무릎 무너짐',
-      highHand: '손 너무 높음',
-      earlyRelease: '이른 릴리스',
-      elbowHike: '팔꿈치 들림',
-      armDrag: '팔이 끌림',
-      forearmFlyout: '팔뚝 빠짐',
-      lateRise: '늦은 상체 상승',
-      gettingOut: '몸이 앞으로 빠짐',
-      closingFB: '발 닫힘/열림'
-    };
     const items = Object.entries(faultRates).map(([k, v]) => ({
       key: k,
-      label: FAULT_LABELS[k] || k,
+      label: FAULT_LABELS_FRIENDLY[k]?.ko || k,
+      desc:  FAULT_LABELS_FRIENDLY[k]?.desc || '',
       rate: v.rate,
       count: v.count,
       n: v.n
@@ -457,46 +653,44 @@
     return (
       <div className="space-y-4">
         {/* 7-factor grouped grades */}
-        <div className="grid grid-cols-7 gap-1.5">
-          {factors.map(f => (
-            <div key={f.id} className={`border rounded p-2 text-center ${gradeBg(f.grade)}`}>
-              <div className="text-[10px] font-bold tracking-wider" style={{ color: gradeColor(f.grade) }}>
-                {f.id}
+        <div>
+          <div className="text-[10.5px] font-bold tracking-wide uppercase mb-1.5" style={{ color: '#94a3b8' }}>
+            7-요인 종합 등급
+          </div>
+          <div className="grid grid-cols-7 gap-1.5">
+            {factors.map(f => (
+              <div key={f.id} className="stat-card text-center" style={{ padding: '8px' }}>
+                <div className="text-[10px] font-bold tracking-wider" style={{ color: '#94a3b8' }}>
+                  {f.id}
+                </div>
+                <div className={`mt-1 inline-block pill pill-${f.grade}`} style={{ fontSize: '14px', padding: '3px 10px', minWidth: '32px' }}>
+                  {f.grade}
+                </div>
+                <div className="text-[10px] leading-tight mt-1" style={{ color: '#cbd5e1' }}>
+                  {f.name.replace(/^[①②③④⑤⑥⑦]\s*/, '')}
+                </div>
               </div>
-              <div className="text-lg font-extrabold leading-tight mt-0.5" style={{ color: gradeColor(f.grade) }}>
-                {f.grade}
-              </div>
-              <div className="text-[9px] text-slate-600 leading-tight mt-0.5">
-                {f.name.replace(/^[①②③④⑤⑥⑦]\s*/, '')}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* 13 raw faults grid */}
         <div>
-          <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase mb-1.5">
+          <div className="text-[10.5px] font-bold tracking-wide uppercase mb-1.5" style={{ color: '#94a3b8' }}>
             세부 결함 발생률 (12종 · {items[0]?.n || 0} 트라이얼 중)
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-            {items.map(it => (
-              <div key={it.key} className={`border rounded px-2 py-1.5 ${
-                it.rate === 0 ? 'border-slate-200 bg-white' :
-                it.rate < 30  ? 'border-amber-200 bg-amber-50/50' :
-                'border-red-200 bg-red-50/50'
-              }`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-[10px] text-slate-700 truncate flex-1">{it.label}</div>
-                  <div className={`text-[10px] font-bold tabular-nums flex-shrink-0 ${
-                    it.rate === 0 ? 'text-emerald-600' :
-                    it.rate < 30  ? 'text-amber-700' :
-                    'text-red-700'
-                  }`}>
-                    {it.count}/{it.n}
+            {items.map(it => {
+              const tone = it.rate === 0 ? 'ok' : it.rate < 30 ? 'warn' : 'bad';
+              return (
+                <div key={it.key} title={it.desc} className={`fault-tile ${tone}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="fault-label truncate flex-1">{it.label}</div>
+                    <div className="fault-rate flex-shrink-0">{it.count}/{it.n}</div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -511,34 +705,30 @@
     return (
       <div className="space-y-3">
         {/* Overall grade banner */}
-        <div className={`flex items-center justify-between px-4 py-3 rounded-md border ${gradeBg(command.overall)}`}>
+        <div className="stat-card flex items-center justify-between" style={{ padding: '14px 16px' }}>
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">종합 등급</div>
-            <div className="text-[12px] text-slate-600 mt-0.5">동작 재현성 기반 제구 잠재력</div>
+            <div className="text-[10.5px] font-bold uppercase tracking-wider" style={{ color: '#94a3b8' }}>종합 등급</div>
+            <div className="text-[12.5px] mt-1" style={{ color: '#cbd5e1' }}>릴리스 일관성 — 제구 안정성 지표</div>
           </div>
-          <div className="text-4xl font-extrabold tabular-nums" style={{ color: gradeColor(command.overall) }}>
+          <span className={`pill pill-${command.overall}`} style={{ fontSize: '24px', padding: '6px 18px', fontWeight: 800 }}>
             {command.overall}
-          </div>
+          </span>
         </div>
 
-        {/* Radar + axes side by side on desktop, stacked on mobile */}
+        {/* Radar + axes */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
-          {/* Radar — 6각 다이어그램 */}
-          <div className="lg:col-span-3 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-lg p-3 flex items-center justify-center">
+          <div className="lg:col-span-3 stat-card flex items-center justify-center" style={{ padding: '12px' }}>
             <window.BBLCharts.RadarChart data={radarData} size={420}/>
           </div>
-          {/* 6 axis cards — 우측 상세 */}
           <div className="lg:col-span-2 grid grid-cols-2 lg:grid-cols-1 gap-2 content-start">
             {command.axes.map(ax => (
-              <div key={ax.key} className={`border rounded-md p-2.5 ${gradeBg(ax.grade)}`}>
+              <div key={ax.key} className="stat-card" style={{ padding: '10px 12px' }}>
                 <div className="flex items-center justify-between">
-                  <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase">{ax.name}</div>
-                  <div className="text-sm font-extrabold tabular-nums" style={{ color: gradeColor(ax.grade) }}>
-                    {ax.grade}
-                  </div>
+                  <div className="text-[10.5px] font-bold tracking-wide uppercase" style={{ color: '#94a3b8' }}>{ax.name}</div>
+                  <span className={`pill pill-${ax.grade}`}>{ax.grade}</span>
                 </div>
-                <div className="mt-1 text-sm font-bold text-slate-900 tabular-nums">{ax.valueDisplay}</div>
-                <div className="mt-0.5 text-[10px] text-slate-500 tabular-nums">
+                <div className="mt-1 text-[14px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>{ax.valueDisplay}</div>
+                <div className="mt-0.5 text-[10.5px] tabular-nums" style={{ color: '#94a3b8' }}>
                   엘리트 ≤ {ax.thr.elite} {ax.unit}
                 </div>
               </div>
@@ -546,9 +736,9 @@
           </div>
         </div>
 
-        <div className="flex items-start gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded text-[11px] text-slate-600 leading-relaxed">
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded text-[11.5px] leading-relaxed" style={{ background: '#0a0e1a', border: '1px solid #1e2a47', color: '#cbd5e1' }}>
           <IconAlert size={12} />
-          <span>본 제구 평가는 <b>10개 트라이얼 동작 재현성</b> 기반 추정이며, 실제 스트라이크 비율과는 다른 지표입니다. 6각 다이어그램의 외곽(녹색 띠) = 엘리트, 중앙(빨간 띠) = 기준 미달.</span>
+          <span>이 평가는 <b style={{ color: '#f1f5f9' }}>10개 투구의 릴리스 일관성</b>(매 투구 자세가 얼마나 같은지)을 측정한 것이며, 실제 스트라이크 비율과는 다른 지표입니다. 6각 다이어그램이 외곽(녹색)에 가까울수록 일관성이 높습니다.</span>
         </div>
       </div>
     );
@@ -571,10 +761,10 @@
           <Stat label="최고구속" value={parseFloat(pitcher.velocityMax)} unit="km/h" decimals={1} highlight/>
           <Stat label="평균구속" value={parseFloat(pitcher.velocityAvg)} unit="km/h" decimals={1}/>
         </div>
-        <div className="border-t border-slate-100 pt-3">
+        <div className="border-t pt-3" style={{ borderColor: '#1e2a47' }}>
           <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase">트라이얼별 구속</div>
-            <div className="text-[11px] text-slate-500 tabular-nums">
+            <div className="text-[10.5px] font-bold tracking-wide uppercase" style={{ color: '#94a3b8' }}>트라이얼별 구속</div>
+            <div className="text-[11px] tabular-nums" style={{ color: '#94a3b8' }}>
               CV {fmt.n1(summary.velocity?.cv)}% · range {fmt.n1((summary.velocity?.max ?? 0) - (summary.velocity?.min ?? 0))} km/h
             </div>
           </div>
@@ -588,11 +778,11 @@
     const num = typeof value === 'number' ? value : parseFloat(value);
     const display = (num != null && !isNaN(num)) ? num.toFixed(decimals) : '—';
     return (
-      <div className={`border rounded-md p-2.5 ${highlight ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
-        <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase">{label}</div>
+      <div className="stat-card" style={highlight ? { borderColor: '#2563eb', background: '#1a233d' } : {}}>
+        <div className="stat-label">{label}</div>
         <div className="mt-1 flex items-baseline gap-1">
-          <span className={`text-xl font-bold tabular-nums ${highlight ? 'text-blue-700' : 'text-slate-900'}`}>{display}</span>
-          <span className="text-[10px] text-slate-500">{unit}</span>
+          <span className="text-[20px] font-bold tabular-nums" style={{ color: highlight ? '#93c5fd' : '#f1f5f9' }}>{display}</span>
+          <span className="text-[11px]" style={{ color: '#94a3b8' }}>{unit}</span>
         </div>
       </div>
     );
@@ -664,17 +854,17 @@
 
     if (loading) {
       return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-          <div className="text-slate-500">분석 중…</div>
+        <div className="report-dark min-h-screen flex items-center justify-center">
+          <div style={{ color: '#94a3b8' }}>분석 중…</div>
         </div>
       );
     }
 
     if (error) {
       return (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
+        <div className="report-dark min-h-screen flex flex-col items-center justify-center p-6">
           <IconAlert size={32}/>
-          <div className="mt-3 text-slate-700">{error}</div>
+          <div className="mt-3" style={{ color: '#e2e8f0' }}>{error}</div>
           {onBack && (
             <button onClick={onBack} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md text-sm">
               입력 페이지로
@@ -689,11 +879,11 @@
 
     if (!hasEnoughData) {
       return (
-        <div className="min-h-screen bg-slate-50 p-6">
-          <div className="max-w-3xl mx-auto bg-white rounded-lg border border-slate-200 p-8 text-center">
+        <div className="report-dark min-h-screen p-6">
+          <div className="max-w-3xl mx-auto bbl-section p-8 text-center" style={{ padding: '32px' }}>
             <IconAlert size={32} />
-            <h2 className="mt-3 font-bold text-slate-800">분석에 필요한 데이터 부족</h2>
-            <div className="mt-2 text-sm text-slate-600">
+            <h2 className="mt-3 font-bold" style={{ color: '#f1f5f9' }}>분석에 필요한 데이터 부족</h2>
+            <div className="mt-2 text-sm" style={{ color: '#cbd5e1' }}>
               최소 1개의 트라이얼 CSV 데이터가 필요합니다.<br/>
               현재 {trials.length}개의 트라이얼 중 {trialsWithData.length}개에만 CSV가 첨부되어 있습니다.
             </div>
@@ -710,7 +900,7 @@
     const { summary, perTrialStats, sequencing, energy, faultRates, factors, command, evaluation, armSlotType } = analysis;
 
     return (
-      <div className="min-h-screen bg-slate-50 pb-16 print:pb-0 print:bg-white">
+      <div className="report-dark min-h-screen pb-16 print:pb-0">
         {/* Print-only top metadata */}
         <div className="hidden print:block px-6 pt-4 pb-2 border-b border-slate-300 text-[10px] text-slate-600 flex justify-between">
           <span>BBL · BIOMOTION BASEBALL LAB</span>
@@ -718,12 +908,12 @@
         </div>
 
         {/* Screen header */}
-        <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950 text-white print:hidden">
+        <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white print:hidden border-b border-slate-800">
           <div className="max-w-5xl mx-auto px-6 py-5 flex items-end justify-between">
             <div>
-              <div className="text-blue-300 text-[10px] tracking-[0.25em] font-semibold mb-1">BBL · PITCHER REPORT</div>
+              <div className="text-blue-300 text-[10.5px] tracking-[0.25em] font-bold mb-1">BBL · PITCHER REPORT</div>
               <h1 className="text-2xl font-bold tracking-tight">{pitcher.name || '—'}</h1>
-              <div className="text-blue-200/70 text-xs mt-1 flex items-center gap-3">
+              <div className="text-blue-200/80 text-[12px] mt-1.5 flex items-center gap-3">
                 <span>{pitcher.level} {pitcher.grade && `${pitcher.grade}${pitcher.level === '프로' ? '년차' : '학년'}`}</span>
                 <span>·</span>
                 <span>{pitcher.throwingHand === 'L' ? '좌투' : '우투'}</span>
@@ -733,11 +923,11 @@
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => window.print()} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold rounded-md flex items-center gap-1.5 transition">
+              <button onClick={() => window.print()} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition">
                 <IconPrint size={13}/> 인쇄 / PDF
               </button>
               {onBack && (
-                <button onClick={onBack} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold rounded-md flex items-center gap-1.5 transition">
+                <button onClick={onBack} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition">
                   <IconArrowLeft size={13}/> 입력으로
                 </button>
               )}
@@ -769,7 +959,7 @@
 
           {videoUrl && (
             <Section n={2} title="측정 영상" subtitle={armSlotType ? `arm slot: ${armSlotType}` : ''}>
-              <video src={videoUrl} controls className="w-full max-h-[460px] rounded-md bg-slate-900"/>
+              <VideoPlayer src={videoUrl}/>
             </Section>
           )}
 
@@ -783,10 +973,12 @@
               <KinCard title="FC→릴리스" mean={sequencing.fcBr.mean} sd={sequencing.fcBr.sd}
                 lo={BBLAnalysis.ELITE.fcBrMs.lo} hi={BBLAnalysis.ELITE.fcBrMs.hi} unit="ms" decimals={0}/>
             </div>
+            {(() => { const s = summarizeSequencing(sequencing); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
           <Section n={videoUrl ? 4 : 3} title="Peak 각속도" subtitle="3분절 회전 + 마네킹 시각화">
             <window.BBLCharts.AngularChart angular={toAngularProps(analysis)}/>
+            {(() => { const s = summarizeAngular(summary); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
           <Section n={videoUrl ? 5 : 4} title="키네틱 체인 에너지 흐름 & 리크"
@@ -799,82 +991,80 @@
                 { label: 'ETI(T→A) 부족', t: energy.triggers.lowETI_TA },
                 { label: 'P→T lag 비정상', t: energy.triggers.badPTLag },
                 { label: 'T→A lag 비정상', t: energy.triggers.badTALag }
-              ].map((it, i) => (
-                <div key={i} className={`border rounded px-2 py-1.5 ${
-                  it.t.rate === 0 ? 'border-emerald-200 bg-emerald-50/30'
-                  : it.t.rate < 50 ? 'border-amber-200 bg-amber-50/30'
-                  : 'border-red-200 bg-red-50/30'
-                }`}>
-                  <div className="text-slate-600 truncate">{it.label}</div>
-                  <div className="font-bold tabular-nums text-slate-900">{it.t.count}/{it.t.n}</div>
-                </div>
-              ))}
+              ].map((it, i) => {
+                const tone = it.t.rate === 0 ? 'ok' : it.t.rate < 50 ? 'warn' : 'bad';
+                return (
+                  <div key={i} className={`fault-tile ${tone}`} style={{ padding: '8px 10px' }}>
+                    <div className="fault-label truncate" style={{ fontSize: '10.5px' }}>{it.label}</div>
+                    <div className="fault-rate mt-0.5" style={{ fontSize: '12px' }}>{it.t.count}/{it.t.n}</div>
+                  </div>
+                );
+              })}
             </div>
+            {(() => { const s = summarizeEnergy(energy); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
-          <Section n={videoUrl ? 6 : 5} title="핵심 운동학 지표" subtitle="Layback 메터 + 5종 기준 비교">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <div className="layback-meter-card md:col-span-1">
-                <window.BBLCharts.LaybackMeter deg={summary.maxLayback?.mean}/>
-              </div>
-              <div className="md:col-span-2 grid grid-cols-2 gap-2 content-start">
-                <KinCard title="Layback (MER)" mean={summary.maxLayback?.mean} sd={summary.maxLayback?.sd}
-                  lo={BBLAnalysis.ELITE.maxLayback.lo} hi={BBLAnalysis.ELITE.maxLayback.hi} unit="°" decimals={1}/>
-                <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
-                  lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
-                  hint="골반-몸통 분리각"/>
-                <KinCard title="Stride length" mean={summary.strideLength?.mean} sd={summary.strideLength?.sd}
-                  lo={0.7} hi={1.2} unit="m" decimals={2}
-                  hint={summary.strideRatio ? `신장 대비 ${summary.strideRatio.mean.toFixed(2)}x` : null}/>
-                <KinCard title="Trunk forward tilt" mean={summary.trunkForwardTilt?.mean} sd={summary.trunkForwardTilt?.sd}
-                  lo={BBLAnalysis.ELITE.trunkForwardTilt.lo} hi={BBLAnalysis.ELITE.trunkForwardTilt.hi} unit="°" decimals={1}/>
-                <KinCard title="Trunk lateral tilt" mean={summary.trunkLateralTilt?.mean} sd={summary.trunkLateralTilt?.sd}
-                  lo={BBLAnalysis.ELITE.trunkLateralTilt.lo} hi={BBLAnalysis.ELITE.trunkLateralTilt.hi} unit="°" decimals={1}/>
-                <KinCard title="Arm slot" mean={summary.armSlotAngle?.mean} sd={summary.armSlotAngle?.sd}
-                  lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
-              </div>
+          <Section n={videoUrl ? 6 : 5} title="핵심 키네매틱스" subtitle="6종 핵심 동작 지표">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <KinCard title="Layback (어깨 외회전)" mean={summary.maxLayback?.mean} sd={summary.maxLayback?.sd}
+                lo={BBLAnalysis.ELITE.maxLayback.lo} hi={BBLAnalysis.ELITE.maxLayback.hi} unit="°" decimals={1}/>
+              <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
+                lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
+                hint="골반-몸통 분리각"/>
+              <KinCard title="Stride length" mean={summary.strideLength?.mean} sd={summary.strideLength?.sd}
+                lo={0.7} hi={1.2} unit="m" decimals={2}
+                hint={summary.strideRatio ? `입력 신장 대비 ${(summary.strideRatio.mean * 100).toFixed(0)}% (${summary.strideRatio.mean.toFixed(2)}x)` : null}/>
+              <KinCard title="Trunk forward tilt" mean={summary.trunkForwardTilt?.mean} sd={summary.trunkForwardTilt?.sd}
+                lo={BBLAnalysis.ELITE.trunkForwardTilt.lo} hi={BBLAnalysis.ELITE.trunkForwardTilt.hi} unit="°" decimals={1}/>
+              <KinCard title="Trunk lateral tilt" mean={summary.trunkLateralTilt?.mean} sd={summary.trunkLateralTilt?.sd}
+                lo={BBLAnalysis.ELITE.trunkLateralTilt.lo} hi={BBLAnalysis.ELITE.trunkLateralTilt.hi} unit="°" decimals={1}/>
+              <KinCard title="Arm slot" mean={summary.armSlotAngle?.mean} sd={summary.armSlotAngle?.sd}
+                lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
             </div>
+            {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
           <Section n={videoUrl ? 7 : 6} title="결함 플래그" subtitle="7-요인 등급 + 12종 세부 발생률">
             <FaultGrid faultRates={faultRates} factors={factors}/>
+            {(() => { const s = summarizeFaults(faultRates, factors); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
-          <Section n={videoUrl ? 8 : 7} title="제구 능력" subtitle="동작 재현성 기반">
+          <Section n={videoUrl ? 8 : 7} title="제구 능력" subtitle="릴리스 일관성 기반">
             <CommandPanel command={command}/>
+            {(() => { const s = summarizeCommand(command); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
           </Section>
 
           <Section n={videoUrl ? 9 : 8} title="강점 · 개선점" subtitle="자동 평가">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <div className="text-[10px] font-bold tracking-wide text-emerald-700 uppercase mb-2 flex items-center gap-1">
+                <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#6ee7b7' }}>
                   <IconCheck size={11}/> 강점 ({evaluation.strengths.length})
                 </div>
                 {evaluation.strengths.length === 0 ? (
-                  <div className="text-[11px] text-slate-400 italic">감지된 강점 없음</div>
+                  <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 강점 없음</div>
                 ) : (
-                  <ul className="space-y-1.5">
+                  <ul className="space-y-2">
                     {evaluation.strengths.map((s, i) => (
-                      <li key={i} className="text-[12px] text-slate-700 leading-relaxed">
-                        <span className="font-semibold text-emerald-700">· {s.title}</span>
-                        <div className="text-[10px] text-slate-500 ml-3">{s.detail}</div>
+                      <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                        <span className="font-semibold" style={{ color: '#6ee7b7' }}>· {s.title}</span>
+                        <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
               <div>
-                <div className="text-[10px] font-bold tracking-wide text-amber-700 uppercase mb-2 flex items-center gap-1">
+                <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#fbbf24' }}>
                   <IconAlert size={11}/> 개선점 ({evaluation.improvements.length})
                 </div>
                 {evaluation.improvements.length === 0 ? (
-                  <div className="text-[11px] text-slate-400 italic">감지된 개선점 없음</div>
+                  <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 개선점 없음</div>
                 ) : (
-                  <ul className="space-y-1.5">
+                  <ul className="space-y-2">
                     {evaluation.improvements.map((s, i) => (
-                      <li key={i} className="text-[12px] text-slate-700 leading-relaxed">
-                        <span className="font-semibold text-amber-700">· {s.title}</span>
-                        <div className="text-[10px] text-slate-500 ml-3">{s.detail}</div>
+                      <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                        <span className="font-semibold" style={{ color: '#fbbf24' }}>· {s.title}</span>
+                        <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
                       </li>
                     ))}
                   </ul>
@@ -883,7 +1073,36 @@
             </div>
           </Section>
 
-          <div className="text-[10px] text-slate-400 text-center pt-3 print:pt-1">
+          {analysis.trainingTips && analysis.trainingTips.length > 0 && (
+            <Section n={videoUrl ? 10 : 9} title="추천 트레이닝 · 드릴" subtitle={`${analysis.trainingTips.length}개 항목`}>
+              <div className="space-y-3">
+                {analysis.trainingTips.map((tip, idx) => (
+                  <div key={idx} className="training-card">
+                    <div className="flex items-start gap-2 mb-2">
+                      <div className="flex-shrink-0 w-6 h-6 rounded-full text-[11.5px] font-bold flex items-center justify-center"
+                        style={{ background: '#f59e0b', color: '#1f1408' }}>
+                        {idx + 1}
+                      </div>
+                      <div className="training-issue">{tip.issue}</div>
+                    </div>
+                    <ul className="ml-8 space-y-1.5">
+                      {tip.drills.map((d, j) => (
+                        <li key={j} className="leading-relaxed">
+                          <span className="training-drill-name">▸ {d.name}</span>
+                          <span className="training-drill-desc"> — {d.desc}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <div className="text-[11px] italic px-2" style={{ color: '#94a3b8' }}>
+                  ※ 위 드릴은 일반적 권장사항이며, 실제 적용 시에는 선수의 부상 이력·체력·기술 수준을 고려해 코치 지도하에 진행해주세요.
+                </div>
+              </div>
+            </Section>
+          )}
+
+          <div className="text-[10.5px] text-center pt-3 print:pt-1" style={{ color: '#64748b' }}>
             © BBL · BioMotion Baseball Lab · {pitcher.measurementDate}<br/>
             본 리포트는 {trialsWithData.length}개 트라이얼 ({trialsWithData[0]?.rowCount || 0}프레임 / 트라이얼 평균) 분석 결과입니다.
           </div>

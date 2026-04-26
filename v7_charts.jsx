@@ -572,9 +572,16 @@
   // ============================================================
   function EnergyFlow({ energy }) {
     const { etiPT, etiTA, leakPct } = energy;
-    // Updated leak thresholds: ETI < 1.3 means sub-elite transfer
-    const ptLeak = etiPT < 1.3;
-    const taLeak = etiTA < 1.3;
+    // 3-tier color: ETI ≥ elite (green) · ≥ mid (amber) · < mid (red leak)
+    function stageStatus(eti, eliteThr, midThr) {
+      if (eti >= eliteThr) return { tier: 'elite', color: '#10b981', dark: '#047857', label: '엘리트' };
+      if (eti >= midThr)   return { tier: 'mid',   color: '#f59e0b', dark: '#b45309', label: '양호 (개선여지)' };
+      return                       { tier: 'leak',  color: '#ef4444', dark: '#7f1d1d', label: '누수 감지' };
+    }
+    const ptC = stageStatus(etiPT, 1.5, 1.3);
+    const taC = stageStatus(etiTA, 1.7, 1.4);
+    const ptLeak = ptC.tier === 'leak';
+    const taLeak = taC.tier === 'leak';
     const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
 
     const K = {
@@ -620,10 +627,10 @@
             <linearGradient id={`energy-${uid}`} gradientUnits="userSpaceOnUse"
               x1={K.lAnkle[0]} y1={K.lAnkle[1]} x2={K.ball[0]} y2={K.ball[1]}>
               <stop offset="0%"   stopColor="#22d3ee"/>
-              <stop offset="28%"  stopColor="#60a5fa"/>
-              <stop offset="55%"  stopColor={taLeak ? '#f59e0b' : '#2563EB'}/>
-              <stop offset="85%"  stopColor={taLeak ? '#ef4444' : '#1d4ed8'}/>
-              <stop offset="100%" stopColor={taLeak ? '#7f1d1d' : '#1e3a8a'}/>
+              <stop offset="28%"  stopColor={ptC.color}/>
+              <stop offset="55%"  stopColor={taC.color}/>
+              <stop offset="85%"  stopColor={taC.color}/>
+              <stop offset="100%" stopColor={taC.dark}/>
             </linearGradient>
             <filter id={`glow-${uid}`} x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur stdDeviation="3" result="b"/>
@@ -797,27 +804,28 @@
             <text x="130" y="446" fill="#e2e8f0" fontSize="11" fontFamily="Inter" fontWeight="600" textAnchor="middle">지면 반력 · 에너지 시작</text>
           </g>
           <g>
-            <line x1={K.pelvisC[0] - 20} y1={K.pelvisC[1] - 10} x2="150" y2="280" stroke={ptLeak ? '#ef4444' : '#60a5fa'} strokeWidth="1.2" strokeDasharray="2 3"/>
-            <rect x="42" y="252" width="176" height="52" rx="6" fill="#0b1220" stroke={ptLeak ? '#ef4444' : '#60a5fa'} strokeOpacity="0.6"/>
-            <text x="130" y="268" fill={ptLeak ? '#ef4444' : '#60a5fa'} fontSize="10" fontFamily="Inter" fontWeight="700" textAnchor="middle" letterSpacing="1">PELVIS → TRUNK</text>
+            <line x1={K.pelvisC[0] - 20} y1={K.pelvisC[1] - 10} x2="150" y2="280" stroke={ptC.color} strokeWidth="1.2" strokeDasharray="2 3"/>
+            <rect x="42" y="252" width="176" height="52" rx="6" fill="#0b1220" stroke={ptC.color} strokeOpacity="0.6"/>
+            <text x="130" y="268" fill={ptC.color} fontSize="10" fontFamily="Inter" fontWeight="700" textAnchor="middle" letterSpacing="1">PELVIS → TRUNK</text>
             <text x="130" y="284" fill="#e2e8f0" fontSize="13" fontFamily="Inter" fontWeight="700" textAnchor="middle">ETI {etiPT.toFixed(2)}</text>
-            <text x="130" y="298" fill="#94a3b8" fontSize="10" fontFamily="Inter" textAnchor="middle">{ptLeak ? '누수 감지' : '정상 전달'}</text>
+            <text x="130" y="298" fill={ptC.color} fontSize="10" fontFamily="Inter" textAnchor="middle">{ptC.label}</text>
           </g>
           <g>
-            <line x1={K.rShoulder[0] + 12} y1={K.rShoulder[1] - 4} x2="700" y2="140" stroke={taLeak ? '#ef4444' : '#2563EB'} strokeWidth="1.2" strokeDasharray="2 3"/>
-            <rect x="592" y="110" width="180" height="60" rx="6" fill="#0b1220" stroke={taLeak ? '#ef4444' : '#2563EB'} strokeOpacity="0.7"/>
-            <text x="682" y="126" fill={taLeak ? '#ef4444' : '#2563EB'} fontSize="10" fontFamily="Inter" fontWeight="700" textAnchor="middle" letterSpacing="1">TRUNK → ARM</text>
+            <line x1={K.rShoulder[0] + 12} y1={K.rShoulder[1] - 4} x2="700" y2="140" stroke={taC.color} strokeWidth="1.2" strokeDasharray="2 3"/>
+            <rect x="592" y="110" width="180" height="60" rx="6" fill="#0b1220" stroke={taC.color} strokeOpacity="0.7"/>
+            <text x="682" y="126" fill={taC.color} fontSize="10" fontFamily="Inter" fontWeight="700" textAnchor="middle" letterSpacing="1">TRUNK → ARM</text>
             <text x="682" y="144" fill="#e2e8f0" fontSize="15" fontFamily="Inter" fontWeight="800" textAnchor="middle">ETI {etiTA.toFixed(2)}</text>
-            <text x="682" y="160" fill={taLeak ? '#fca5a5' : '#94a3b8'} fontSize="10" fontFamily="Inter" fontWeight={taLeak ? 700 : 400} textAnchor="middle">
-              {taLeak ? `⚠ 누수 ${leakPct}% · 어깨 부하↑` : '정상 전달'}
+            <text x="682" y="160" fill={taC.color} fontSize="10" fontFamily="Inter" fontWeight={taLeak ? 700 : 500} textAnchor="middle">
+              {taLeak ? `⚠ ${taC.label} (누수 ${leakPct}%)` : taC.label}
             </text>
           </g>
         </svg>
 
         <div className="silhouette-legend">
-          <div className="leg-item"><span className="dot" style={{ background: 'linear-gradient(90deg,#22d3ee,#2563EB)' }}/>에너지 흐름 (발 → 골반 → 몸통 → 팔 → 공)</div>
-          <div className="leg-item"><span className="dot" style={{ background: '#ef4444' }}/>누수 지점</div>
-          <div className="leg-item note">ETI ≥ 1.3 = 정상 전달 · 1.3 미만 = 누수 신호</div>
+          <div className="leg-item"><span className="dot" style={{ background: '#10b981' }}/>엘리트 (ETI ≥ 기준)</div>
+          <div className="leg-item"><span className="dot" style={{ background: '#f59e0b' }}/>양호 (개선여지)</div>
+          <div className="leg-item"><span className="dot" style={{ background: '#ef4444' }}/>누수 감지</div>
+          <div className="leg-item note">ETI = 다음 분절 회전속도 / 직전 분절 속도. 1.0 = 같음, 1.5+ = 가속 잘됨</div>
         </div>
       </div>
     );

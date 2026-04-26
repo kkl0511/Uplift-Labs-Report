@@ -111,20 +111,221 @@ html, body {
   }
   html, body { background: white !important; }
   body { font-size: 10pt; }
-  /* Avoid breaking sections across pages where possible */
   section { page-break-inside: avoid; break-inside: avoid; }
-  /* Hide interactive controls */
   button, input[type="file"], video::-webkit-media-controls-fullscreen-button {
     display: none !important;
   }
-  /* Smaller padding and tighter section spacing */
   section > div:last-child { padding: 8pt 10pt !important; }
-  /* Show all video frames as still image preview */
   video {
     max-height: 280px !important;
   }
-  /* Disable all SVG animations on print */
   .silhouette-svg animate,
   .silhouette-svg animateMotion,
   .silhouette-svg animateTransform { display: none !important; }
+  /* Print: convert dark to light */
+  .report-dark { background: white !important; color: #0f172a !important; }
+  .report-dark .bbl-section { background: white !important; border-color: #e2e8f0 !important; }
+  .report-dark .bbl-section-head { background: #f1f5f9 !important; color: #0f172a !important; }
+  .report-dark * { color: inherit !important; }
 }
+
+/* =============================================================
+   DARK REPORT THEME — 검정 배경 + 작은 글씨 가독성
+   ============================================================= */
+.report-dark {
+  background: #0a0e1a;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+.report-dark .bbl-section {
+  background: #131a2b;
+  border: 1px solid #1e2a47;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.report-dark .bbl-section-head {
+  background: linear-gradient(180deg, #1a233d 0%, #131a2b 100%);
+  border-bottom: 1px solid #1e2a47;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.report-dark .bbl-section-num {
+  background: #2563eb;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.report-dark .bbl-section-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #f1f5f9;
+  letter-spacing: -0.01em;
+}
+.report-dark .bbl-section-subtitle {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: auto;
+}
+.report-dark .bbl-section-body {
+  padding: 14px;
+}
+.report-dark .stat-card {
+  background: #1a233d;
+  border: 1px solid #2a3656;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.report-dark .stat-label {
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.report-dark .stat-value {
+  font-size: 18px;
+  font-weight: 800;
+  color: #f1f5f9;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.report-dark .stat-sub {
+  font-size: 11px;
+  color: #cbd5e1;
+  margin-top: 1px;
+}
+.report-dark .stat-good { border-color: #10b981; background: #042f2c; }
+.report-dark .stat-good .stat-value { color: #6ee7b7; }
+.report-dark .stat-mid  { border-color: #f59e0b; background: #1f1408; }
+.report-dark .stat-mid .stat-value { color: #fbbf24; }
+.report-dark .stat-bad  { border-color: #ef4444; background: #2a0a0a; }
+.report-dark .stat-bad .stat-value { color: #fca5a5; }
+
+.report-dark .summary-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.report-dark .summary-box.good { background: #042f2c; border: 1px solid #10b981; }
+.report-dark .summary-box.mid  { background: #1f1408; border: 1px solid #f59e0b; }
+.report-dark .summary-box.bad  { background: #2a0a0a; border: 1px solid #ef4444; }
+.report-dark .summary-icon {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+}
+.report-dark .summary-box.good .summary-icon { background: #10b981; color: #042f2c; }
+.report-dark .summary-box.mid  .summary-icon { background: #f59e0b; color: #1f1408; }
+.report-dark .summary-box.bad  .summary-icon { background: #ef4444; color: #2a0a0a; }
+.report-dark .summary-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.report-dark .summary-box.good .summary-label { color: #6ee7b7; }
+.report-dark .summary-box.mid  .summary-label { color: #fbbf24; }
+.report-dark .summary-box.bad  .summary-label { color: #fca5a5; }
+.report-dark .summary-text {
+  font-size: 12.5px;
+  color: #f1f5f9;
+  line-height: 1.55;
+}
+
+.report-dark .fault-tile {
+  background: #1a233d;
+  border: 1px solid #2a3656;
+  border-radius: 5px;
+  padding: 7px 9px;
+}
+.report-dark .fault-tile.warn { background: #1f1408; border-color: #f59e0b; }
+.report-dark .fault-tile.bad  { background: #2a0a0a; border-color: #ef4444; }
+.report-dark .fault-label {
+  font-size: 11px;
+  color: #cbd5e1;
+}
+.report-dark .fault-rate {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.report-dark .fault-tile.ok   .fault-rate { color: #6ee7b7; }
+.report-dark .fault-tile.warn .fault-rate { color: #fbbf24; }
+.report-dark .fault-tile.bad  .fault-rate { color: #fca5a5; }
+
+.report-dark .training-card {
+  background: #1f1408;
+  border: 1px solid #f59e0b;
+  border-radius: 7px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.report-dark .training-issue {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fbbf24;
+  margin-bottom: 7px;
+}
+.report-dark .training-drill-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #93c5fd;
+}
+.report-dark .training-drill-desc {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.report-dark .pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.report-dark .pill-A { background: #10b981; color: #042f2c; }
+.report-dark .pill-B { background: #2563eb; color: white; }
+.report-dark .pill-C { background: #f59e0b; color: #1f1408; }
+.report-dark .pill-D { background: #ef4444; color: white; }
+.report-dark .pill-NA { background: #475569; color: #cbd5e1; }
+
+.report-dark .button-bar button {
+  background: #1e293b;
+  border: 1px solid #475569;
+  color: #cbd5e1;
+}
+.report-dark .button-bar button:hover {
+  border-color: #2563eb;
+  color: white;
+}
+.report-dark .button-bar button.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+}
+
+.report-dark a { color: #93c5fd; }
+.report-dark hr { border-color: #1e2a47; }
+
