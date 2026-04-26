@@ -1,7 +1,9 @@
 /* global React, ReactDOM, Papa, idbKeyval */
-const { useState, useEffect, useMemo, useRef } = React;
+(function () {
+  'use strict';
+  const { useState, useEffect, useMemo, useRef } = React;
 
-const STORAGE_KEY = 'pitcher:draft';
+  const STORAGE_KEY = 'pitcher:draft';
 
 // ---------- Inline SVG Icons (lucide-style) ----------
 const Icon = ({ children, size = 16, ...props }) => (
@@ -1320,3 +1322,5 @@ function App() {
 // ---------- Mount ----------
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
+
+})();
