@@ -116,6 +116,60 @@
     );
   }
 
+  // Collapsible explanation panel — describes definitions, methods, interpretation
+  function InfoBox({ items }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <div className="mt-3 border rounded-md overflow-hidden" style={{ borderColor: '#1e2a47' }}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="w-full text-left px-3 py-2 flex items-center justify-between text-[11.5px] font-bold transition print:hidden"
+          style={{ background: '#0f1729', color: '#93c5fd' }}>
+          <span>📖 변인 설명 (정의 · 의미 · 계산 · 해석)</span>
+          <span style={{ color: '#94a3b8' }}>{open ? '▲ 접기' : '▼ 펼치기'}</span>
+        </button>
+        {/* Always visible on print */}
+        <div className={open ? '' : 'hidden print:block'}>
+          <div className="p-3 space-y-3" style={{ background: '#0a0e1a' }}>
+            {items.map((it, i) => (
+              <div key={i} className="border-l-2 pl-3" style={{ borderColor: '#3b82f6' }}>
+                <div className="text-[12.5px] font-bold mb-1" style={{ color: '#f1f5f9' }}>
+                  {it.term}
+                </div>
+                <div className="grid gap-1 text-[11.5px] leading-relaxed">
+                  {it.def && (
+                    <div>
+                      <span className="font-semibold" style={{ color: '#93c5fd' }}>정의: </span>
+                      <span style={{ color: '#e2e8f0' }}>{it.def}</span>
+                    </div>
+                  )}
+                  {it.meaning && (
+                    <div>
+                      <span className="font-semibold" style={{ color: '#93c5fd' }}>의미: </span>
+                      <span style={{ color: '#e2e8f0' }}>{it.meaning}</span>
+                    </div>
+                  )}
+                  {it.method && (
+                    <div>
+                      <span className="font-semibold" style={{ color: '#93c5fd' }}>계산: </span>
+                      <span style={{ color: '#e2e8f0' }}>{it.method}</span>
+                    </div>
+                  )}
+                  {it.interpret && (
+                    <div>
+                      <span className="font-semibold" style={{ color: '#93c5fd' }}>해석: </span>
+                      <span style={{ color: '#e2e8f0' }}>{it.interpret}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function summarizeSequencing(seq) {
     const ptM = seq.ptLag.mean;
     const taM = seq.taLag.mean;
@@ -179,16 +233,16 @@
   function summarizeKinematics(summary, armSlotType) {
     const E = BBLAnalysis.ELITE;
     const inRange = (v, lo, hi) => v != null && v >= lo && v <= hi;
-    const lay = summary.maxLayback?.mean;
+    const lay = summary.maxER?.mean;
     const xf = summary.maxXFactor?.mean;
     const tilt = summary.trunkForwardTilt?.mean;
     const stride = summary.strideLength?.mean;
     const issues = [];
-    if (lay != null && lay < E.maxLayback.lo) issues.push(`Layback(${Math.round(lay)}°)이 부족 — 어깨 외회전 가동성 점검`);
+    if (lay != null && lay < E.maxER.lo) issues.push(`어깨 외회전(Max ER ${Math.round(lay)}°)이 부족 — 가동성 점검`);
     if (xf != null && xf < E.maxXFactor.lo) issues.push(`X-factor(${Math.round(xf)}°)가 작음 — 골반-몸통 분리 부족`);
     if (tilt != null && tilt < E.trunkForwardTilt.lo) issues.push(`전방 기울기(${Math.round(tilt)}°)가 낮음 — 릴리스 포인트 낮을 위험`);
     if (issues.length === 0) {
-      return { tone: 'good', text: `Layback · X-factor · 몸통 기울기 · Stride 등 핵심 지표가 모두 표준 범위 안에 있습니다. ${armSlotType ? `Arm slot은 ${armSlotType} 타입.` : ''}` };
+      return { tone: 'good', text: `Max ER · X-factor · 몸통 기울기 · Stride 등 핵심 지표가 모두 표준 범위 안에 있습니다. ${armSlotType ? `Arm slot은 ${armSlotType} 타입.` : ''}` };
     }
     if (issues.length >= 3) {
       return { tone: 'bad', text: `${issues.length}개 핵심 지표가 표준 범위 밖에 있습니다 — ${issues.join(' / ')}.` };
@@ -986,9 +1040,9 @@
     const dArm = (sM.peakArmVel?.mean ?? 0) - (bM.peakArmVel?.mean ?? 0);
     push(Math.abs(dArm) >= 50, dArm > 0 ? 'better' : 'worse',
       `팔 회전속도 ${dArm >= 0 ? '+' : ''}${Math.round(dArm)} °/s`);
-    const dLay = (sM.maxLayback?.mean ?? 0) - (bM.maxLayback?.mean ?? 0);
+    const dLay = (sM.maxER?.mean ?? 0) - (bM.maxER?.mean ?? 0);
     push(Math.abs(dLay) >= 5, dLay > 0 ? 'better' : 'worse',
-      `Layback ${dLay >= 0 ? '+' : ''}${Math.round(dLay)}°`);
+      `Max ER ${dLay >= 0 ? '+' : ''}${Math.round(dLay)}°`);
     const dXf = (sM.maxXFactor?.mean ?? 0) - (bM.maxXFactor?.mean ?? 0);
     push(Math.abs(dXf) >= 5, dXf > 0 ? 'better' : 'worse',
       `X-factor ${dXf >= 0 ? '+' : ''}${Math.round(dXf)}°`);
@@ -1118,8 +1172,8 @@
 
         {/* 핵심 키네매틱스 */}
         <CompareSection title="핵심 키네매틱스" subtitle="6종 동작 지표">
-          <CompareRow label="Layback (어깨 외회전)" unit="°" decimals={1}
-            subjectVal={sM.maxLayback?.mean} benchVal={bM.maxLayback?.mean}/>
+          <CompareRow label="Max ER (어깨 외회전)" unit="°" decimals={1}
+            subjectVal={sM.maxER?.mean} benchVal={bM.maxER?.mean}/>
           <CompareRow label="X-factor" unit="°" decimals={1}
             subjectVal={sM.maxXFactor?.mean} benchVal={bM.maxXFactor?.mean}/>
           <CompareRow label="Stride length" unit="m" decimals={2}
@@ -1153,8 +1207,8 @@
             subjectVal={sM.armSlotAngle?.sd} benchVal={bM.armSlotAngle?.sd}/>
           <CompareRow label="몸통 기울기 SD" unit="°" decimals={2} lowerIsBetter
             subjectVal={sM.trunkForwardTilt?.sd} benchVal={bM.trunkForwardTilt?.sd}/>
-          <CompareRow label="Layback CV" unit="%" decimals={2} lowerIsBetter
-            subjectVal={sM.maxLayback?.cv} benchVal={bM.maxLayback?.cv}/>
+          <CompareRow label="Max ER CV" unit="%" decimals={2} lowerIsBetter
+            subjectVal={sM.maxER?.cv} benchVal={bM.maxER?.cv}/>
           <CompareRow label="Stride CV" unit="%" decimals={2} lowerIsBetter
             subjectVal={sM.strideLength?.cv} benchVal={bM.strideLength?.cv}/>
           <CompareRow label="FC→BR CV" unit="%" decimals={2} lowerIsBetter
@@ -1488,17 +1542,81 @@
                 lo={BBLAnalysis.ELITE.fcBrMs.lo} hi={BBLAnalysis.ELITE.fcBrMs.hi} unit="ms" decimals={0}/>
             </div>
             {(() => { const s = summarizeSequencing(sequencing); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: '분절 시퀀싱 (Kinematic Sequencing)',
+                def: '투구 동작에서 골반(Pelvis) → 몸통(Trunk) → 팔(Arm) 순서로 각 분절이 차례로 가속과 감속을 반복하는 시간적 패턴.',
+                meaning: '하체에서 시작된 에너지가 채찍처럼 상위 분절로 전달되어야 효율적인 구속이 만들어진다. 순서가 어긋나면 에너지가 분산되거나 어깨·팔꿈치 부하가 급증한다.',
+                method: '각 분절의 회전 각속도(°/s) 시계열에서 peak 시점을 찾아 분절 간 시간차(lag, ms)를 계산.',
+                interpret: 'P→T→A 순서가 지켜져야 하며 각 lag는 25~70ms가 이상적. lag가 너무 짧으면 분절이 동시에 회전(채찍 효과 감소), 너무 길면 에너지 손실. 순서가 뒤집히면 부상 위험.'
+              },
+              {
+                term: 'P→T lag (Pelvis-to-Trunk lag)',
+                def: '골반의 peak 회전속도 시점에서 몸통의 peak 회전속도 시점까지의 시간차.',
+                meaning: '하체→상체로의 회전 에너지 전달 속도를 반영. 골반-몸통 분리(X-factor)를 어떻게 풀어내는지 보여준다.',
+                method: 'argmax(|pelvis 각속도|) → argmax(|trunk 각속도|) 시점 차이를 ms로 환산.',
+                interpret: '25~70ms 정상. < 25ms = 골반-몸통 동시 회전(분리 부족), > 70ms = 전달 지연으로 트렁크 가속 약함.'
+              },
+              {
+                term: 'T→A lag (Trunk-to-Arm lag)',
+                def: '몸통 peak 회전속도 시점에서 팔 peak 회전속도 시점까지의 시간차.',
+                meaning: '몸통 회전이 팔의 가속을 얼마나 효율적으로 끌어내는지를 나타낸다. 어깨·팔꿈치 부하와 직결되는 핵심 지표.',
+                method: 'argmax(|trunk 각속도|) → argmax(|arm 각속도|) 시점 차이.',
+                interpret: '25~70ms 정상. < 25ms = 팔이 몸통과 함께 회전(채찍 효과 부재, 어깨 부하↑), > 70ms = 에너지 누수.'
+              },
+              {
+                term: 'FC → 릴리스 시간 (Stride Phase Duration)',
+                def: '앞발 착지(Foot Contact) 시점부터 공 놓는 시점(Ball Release)까지의 시간.',
+                meaning: '딜리버리 단계의 길이. 이 시간 동안 골반→몸통→팔의 순차적 가속이 모두 일어나야 한다.',
+                method: '(BR 프레임 − FC 프레임) / fps × 1000.',
+                interpret: '130~180ms가 일반적. 너무 짧으면 시퀀싱 구간 부족, 너무 길면 동작이 늘어져 에너지 누수 가능.'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 4 : 3} title="Peak 각속도" subtitle="3분절 회전 + 마네킹 시각화">
             <window.BBLCharts.AngularChart angular={toAngularProps(analysis)}/>
             {(() => { const s = summarizeAngular(summary); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: 'Peak 각속도 (Peak Angular Velocity)',
+                def: '각 분절(골반·몸통·팔)이 투구 동작 중 도달하는 최대 회전 속도(°/s).',
+                meaning: '투구 시 각 분절이 얼마나 빠르게 회전하는지를 나타내며, 구속의 직접적 결정 요인. 상위 분절일수록 더 빨라야 채찍 효과(distal acceleration)가 일어난다.',
+                method: 'Uplift CSV의 각 분절 rotational_velocity_with_respect_to_ground 시계열에서 절댓값 max를 찾음.',
+                interpret: '문헌 표준: 골반 500~800°/s, 몸통 900~1300°/s, 팔 1300~2300°/s. 이 순서대로 점차 커져야 정상. 팔이 몸통보다 느리면 채찍 효과 미작동 (부상 위험)'
+              },
+              {
+                term: '골반 각속도 (Pelvis Angular Velocity)',
+                def: '골반이 지면 기준 수직축 주위로 회전하는 속도.',
+                meaning: '키네틱 체인의 시작점. 하체에서 만들어진 회전 에너지의 크기를 나타낸다. 엉덩이-둔근의 강한 외전과 추진력에서 비롯됨.',
+                method: 'pelvis_rotational_velocity_with_respect_to_ground 컬럼의 절댓값 max.',
+                interpret: '500°/s 미만 = 하체 추진력 부족, 500~700 = 양호, 700+ = 엘리트.'
+              },
+              {
+                term: '몸통 각속도 (Trunk Angular Velocity)',
+                def: '몸통(흉곽)이 지면 기준으로 회전하는 속도.',
+                meaning: '골반에서 받은 에너지를 증폭해 어깨로 전달하는 중간 분절. 코어 강도와 hip-shoulder separation의 효율을 반영.',
+                method: 'trunk_rotational_velocity_with_respect_to_ground 컬럼의 절댓값 max.',
+                interpret: '800°/s 미만 = 코어 회전 부족, 800~1100 = 양호, 1100+ = 엘리트. 골반 대비 1.4~1.7배가 이상적 (ETI).'
+              },
+              {
+                term: '팔 각속도 (Arm Angular Velocity)',
+                def: '투구하는 쪽 팔의 회전 속도(주로 internal rotation 속도).',
+                meaning: '구속과 가장 직접적으로 관련. 몸통→팔로의 에너지 전달과 어깨 가동성·근력에 의해 결정.',
+                method: 'right(or left)_arm_rotational_velocity_with_respect_to_ground 컬럼의 절댓값 max.',
+                interpret: '1300°/s 미만 = 구속 한계 가능성, 1300~1900 = 양호, 1900+ = 엘리트(150km/h+ 투수 수준). 몸통 대비 1.5~1.9배가 이상적.'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 5 : 4} title="키네틱 체인 에너지 흐름 & 리크"
             subtitle={`종합 누수율 ${fmt.n1(energy.leakRate)}%`}>
             <window.BBLCharts.EnergyFlow energy={toEnergyProps(analysis)}/>
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[10px]">
+
+            <div className="mt-4 text-[10.5px] uppercase tracking-wider font-bold mb-1.5" style={{ color: '#94a3b8' }}>
+              내부 시퀀싱 누수 (5종)
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[10px]">
               {[
                 { label: '시퀀스 위반', t: energy.triggers.sequenceViolations },
                 { label: 'ETI(P→T) 부족', t: energy.triggers.lowETI_PT },
@@ -1515,13 +1633,161 @@
                 );
               })}
             </div>
+
+            <div className="mt-4 text-[10.5px] uppercase tracking-wider font-bold mb-1.5" style={{ color: '#94a3b8' }}>
+              현장 핵심 누수 요인 (3종)
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {/* 1. Flying Open */}
+              {(() => {
+                const v = summary.flyingOpenPct?.mean;
+                const tone = v == null ? '' : v <= 25 ? 'stat-good' : v <= 35 ? '' : v <= 50 ? 'stat-mid' : 'stat-bad';
+                const status = v == null ? '—' : v <= 25 ? '엘리트' : v <= 35 ? '양호' : v <= 50 ? '주의' : '큰 누수';
+                return (
+                  <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
+                    <div className="stat-label">① Flying Open (조기 열림)</div>
+                    <div className="mt-1 flex items-baseline gap-1.5">
+                      <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
+                        {v != null ? v.toFixed(0) : '—'}
+                      </span>
+                      <span className="text-[11px]" style={{ color: '#94a3b8' }}>%</span>
+                    </div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: '#94a3b8' }}>
+                      FC 시점 몸통 회전 비율
+                    </div>
+                    <div className="text-[10.5px] mt-1" style={{ color: '#cbd5e1' }}>
+                      <b>{status}</b> · 엘리트 ≤ 25% · 0% = 완전 닫힘
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* 2. Trunk forward flex at FC */}
+              {(() => {
+                const v = summary.trunkFlexAtFC?.mean;
+                const ideal = v != null && v >= -15 && v <= 5;
+                const tolerable = v != null && v >= -20 && v <= 10;
+                const tone = v == null ? '' : ideal ? 'stat-good' : tolerable ? 'stat-mid' : 'stat-bad';
+                const status = v == null ? '—' : ideal ? '이상적' : tolerable ? '허용' : '에너지 누수';
+                return (
+                  <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
+                    <div className="stat-label">② 몸통 전방 굴곡 @FC</div>
+                    <div className="mt-1 flex items-baseline gap-1.5">
+                      <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
+                        {v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) : '—'}
+                      </span>
+                      <span className="text-[11px]" style={{ color: '#94a3b8' }}>°</span>
+                    </div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: '#94a3b8' }}>
+                      FC 시점 상체 기울기
+                    </div>
+                    <div className="text-[10.5px] mt-1" style={{ color: '#cbd5e1' }}>
+                      <b>{status}</b> · 이상 -15~+5° (직립~약간 뒤로 젖힘)
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* 3. Knee SSC */}
+              {(() => {
+                const score = summary.kneeSscScore?.mean;
+                const net = summary.kneeNetChange?.mean;
+                const dip = summary.kneeDipMagnitude?.mean;
+                const tt = summary.kneeTransitionMs?.mean;
+                // Dominant class: most-frequent class across trials
+                const classes = perTrialStats.map(p => p.kneeSSC?.sscClass).filter(c => c);
+                const classCount = {};
+                classes.forEach(c => { classCount[c] = (classCount[c] || 0) + 1; });
+                const dominantClass = Object.entries(classCount).sort((a,b) => b[1] - a[1])[0]?.[0] || null;
+                const tone = dominantClass === 'good' ? 'stat-good'
+                            : dominantClass === 'partial' ? ''
+                            : dominantClass === 'stiff' ? 'stat-mid'
+                            : dominantClass === 'collapse' ? 'stat-bad' : '';
+                const label = { good: '✓ 좋은 SSC', partial: '△ 부분 SSC', stiff: '△ 뻣뻣함 (SSC 부족)', collapse: '✗ 무릎 무너짐' }[dominantClass] || '—';
+                return (
+                  <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
+                    <div className="stat-label">③ 무릎 SSC 활용</div>
+                    <div className="mt-1 flex items-baseline gap-1.5">
+                      <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
+                        {score != null ? Math.round(score) : '—'}
+                      </span>
+                      <span className="text-[11px]" style={{ color: '#94a3b8' }}>/100</span>
+                    </div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: '#94a3b8' }}>
+                      앞 무릎 SSC (스트레치-쇼트닝)
+                    </div>
+                    <div className="text-[10.5px] mt-1" style={{ color: '#cbd5e1' }}>
+                      <b>{label}</b>
+                    </div>
+                    {net != null && (
+                      <div className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>
+                        FC→BR 변화 {net >= 0 ? '+' : ''}{net.toFixed(0)}° · dip {dip?.toFixed(0)}° in {tt?.toFixed(0)}ms
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 3 trigger tiles for new metrics */}
+            <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+              {[
+                { label: '① Flying open 발생', t: energy.triggers.flyingOpen },
+                { label: '② 조기 몸통 굴곡', t: energy.triggers.earlyTrunkFlex },
+                { label: '③ 무릎 무너짐/뻣뻣', t: energy.triggers.kneeBad }
+              ].map((it, i) => {
+                const tone = it.t.rate === 0 ? 'ok' : it.t.rate < 50 ? 'warn' : 'bad';
+                return (
+                  <div key={i} className={`fault-tile ${tone}`} style={{ padding: '6px 8px' }}>
+                    <div className="fault-label truncate" style={{ fontSize: '10.5px' }}>{it.label}</div>
+                    <div className="fault-rate mt-0.5" style={{ fontSize: '12px' }}>{it.t.count}/{it.t.n}</div>
+                  </div>
+                );
+              })}
+            </div>
+
             {(() => { const s = summarizeEnergy(energy); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: '키네틱 체인 (Kinetic Chain) & 에너지 누수 (Energy Leak)',
+                def: '하체→골반→몸통→팔→공으로 이어지는 운동에너지 전달 사슬. 어떤 분절에서 다음 분절로 에너지가 충분히 가속되지 못하면 "누수"로 간주.',
+                meaning: '구속 향상과 부상 예방의 핵심. 누수가 적은 투수일수록 적은 노력으로 더 빠른 공을 던질 수 있고 어깨·팔꿈치 부하가 적다.',
+                method: '8개 누수 요인의 발생률을 합산 — 시퀀스 위반, ETI(P→T)/ETI(T→A) 부족, P→T/T→A lag 비정상, Flying Open, 조기 몸통 굴곡, 무릎 무너짐.',
+                interpret: '종합 누수율 < 15% 우수, 15~30% 양호, 30~50% 주의, 50%+ 큰 누수. 어떤 요인이 빨간색으로 켜져 있는지가 더 중요한 진단 정보.'
+              },
+              {
+                term: 'ETI — Energy Transfer Index (에너지 전달 지수)',
+                def: '한 분절의 peak 회전속도가 다음 분절의 peak 회전속도로 얼마나 증폭되는지의 비율.',
+                meaning: '채찍처럼 분절이 점차 빨라져야 효율적. 비율이 1.0 미만이면 가속이 일어나지 않는다(에너지 정체).',
+                method: 'ETI(P→T) = peak trunk ω / peak pelvis ω, ETI(T→A) = peak arm ω / peak trunk ω.',
+                interpret: '엘리트: ETI(P→T) ≥ 1.5, ETI(T→A) ≥ 1.7. 양호: 각각 1.3 / 1.4. 그 미만 = 분절 간 에너지 전달 손실(누수).'
+              },
+              {
+                term: 'Flying Open (몸통 조기 열림)',
+                def: 'Foot Contact(앞발 착지) 시점에 몸통이 이미 홈플레이트 쪽으로 회전을 시작한 상태.',
+                meaning: '이상적으로는 FC까지 몸통은 닫혀(coiled) 있다가 FC 이후부터 회전을 시작해야 한다. 일찍 열리면 hip-shoulder separation을 잃고 골반→몸통 에너지 전달이 약해진다(구속 손실 + 어깨 부하 증가).',
+                method: '(FC 시점 trunk_global_rotation − 가장 닫힌 trunk_global_rotation) / (BR 시점 trunk_global_rotation − 가장 닫힌 값) × 100.',
+                interpret: '0% = FC에 완전히 닫혀 있음 (이상적), 100% = FC에 이미 릴리스 자세까지 회전. 엘리트 ≤ 25%, 양호 ≤ 35%, 주의 ≤ 50%, 큰 누수 > 50%.'
+              },
+              {
+                term: '풋컨택트 시 몸통 전방 굴곡',
+                def: 'FC 시점에서 몸통이 시상면(전후)으로 얼마나 앞쪽으로 기울었는지의 각도.',
+                meaning: '몸통의 굴곡 동작은 큰 에너지를 만드는 동력원. FC 시점에는 직립 또는 약간 뒤로 젖힌 자세를 유지해야 딜리버리 단계에서 굴곡 에너지를 새로 만들어 쓸 수 있다. 이미 굴곡되어 있으면 그 에너지원을 사용 못함.',
+                method: 'FC 프레임에서 pelvis → proximal_neck 벡터를 시상면(Y-Z 평면)에 투영하고 atan2(앞쪽 성분, 위쪽 성분)으로 각도 계산. + = 앞쪽으로 기울어짐, − = 뒤쪽으로 젖혀짐.',
+                interpret: '이상적: -15°~+5° (직립~약간 뒤로 젖힘). 허용: -20°~+10°. > +10° = 이미 굴곡되어 에너지 누수 발생.'
+              },
+              {
+                term: '무릎 SSC 활용 (Stretch-Shortening Cycle)',
+                def: '앞 무릎이 FC 직후 짧고 빠르게 굴곡(편심 부하) 후 곧바로 신전(동심 추진)되는 패턴. 근육-건의 탄성 에너지를 활용하는 메커니즘.',
+                meaning: '무릎이 짧게 굽혔다 신속히 신전되어야 ① 지면반력을 골반쪽으로 효과적으로 전달하고 ② 신전 시 지면을 더 강하게 누를 수 있어 회전 추진력이 증폭된다. 무릎이 계속 굽혀지면(무너짐) 에너지가 흡수만 되고 추진으로 전환 안 됨.',
+                method: 'FC~BR 구간에서 (1) FC 시점 굴곡각, (2) max 굴곡 시점·각·소요시간, (3) BR 시점 굴곡각을 측정. dip(편심), recovery(동심), net 변화량으로 4단계 분류.',
+                interpret: '✓ Good (80~100점): 짧은 dip(2~20°) + 빠른 transition(<80ms) + 충분한 recovery(>70%) + 최종 신전. △ Partial(50~70): 일부 SSC만. △ Stiff(40): dip 거의 없음(편심 부하 부족). ✗ Collapse(0~30): FC→BR 동안 더 굴곡(에너지 누수+SSC 미사용).'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 6 : 5} title="핵심 키네매틱스" subtitle="6종 핵심 동작 지표">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <KinCard title="Layback (어깨 외회전)" mean={summary.maxLayback?.mean} sd={summary.maxLayback?.sd}
-                lo={BBLAnalysis.ELITE.maxLayback.lo} hi={BBLAnalysis.ELITE.maxLayback.hi} unit="°" decimals={1}/>
+              <KinCard title="Max ER (어깨 외회전)" mean={summary.maxER?.mean} sd={summary.maxER?.sd}
+                lo={BBLAnalysis.ELITE.maxER.lo} hi={BBLAnalysis.ELITE.maxER.hi} unit="°" decimals={1}/>
               <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
                 lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
                 hint="골반-몸통 분리각"/>
@@ -1536,16 +1802,106 @@
                 lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
             </div>
             {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: 'Max ER (Maximum External Rotation, 최대 어깨 외회전)',
+                def: '공 놓기 직전 cocking 자세에서 어깨가 외회전한 최대 각도 — 흔히 "layback"이라고도 부른다.',
+                meaning: '팔이 뒤로 최대로 젖혀지면서 발생하는 신장반사(stretch reflex)와 탄성에너지가 팔의 빠른 internal rotation으로 전환된다. 이 각도가 클수록 더 빠른 공이 가능.',
+                method: 'Uplift CSV의 right(left)_shoulder_external_rotation 시계열에서 [FC, BR] 윈도우 내 최댓값.',
+                interpret: '엘리트 투수 170~195°. < 155° = 가동성 부족, > 200° = 측정 오류 또는 과도한 부하 (어깨 부상 위험).'
+              },
+              {
+                term: 'X-factor (골반-몸통 분리각)',
+                def: '로딩 단계 끝(FC 부근)에서 골반과 몸통의 회전 각도 차이 — 즉 두 분절이 서로 얼마나 비틀어졌는지.',
+                meaning: '클수록 코어 근육이 stretch되고 그 탄성에너지가 트렁크 회전 가속의 추진력이 된다. "분리"가 클수록 spring처럼 더 강한 회전 발생.',
+                method: '|pelvis_global_rotation − trunk_global_rotation|을 FC-100ms ~ FC+50ms 윈도우에서 max로 계산.',
+                interpret: '엘리트 35~60°. < 35° = 분리 부족(코어 회전력 작음), > 60° = 과회전(trunk lag risk).'
+              },
+              {
+                term: 'Stride length & Stride ratio',
+                def: 'Stride length = 등판 시점 뒷발 위치에서 FC 시점 앞발 위치까지의 수평 거리(m). Stride ratio = stride length / 신장.',
+                meaning: '긴 stride는 ① 더 긴 가속 거리 확보 ② 릴리스 포인트 전방 이동(타자와 거리 단축) ③ 강한 hip 추진 활용을 의미.',
+                method: '뒷발 ankle Z 좌표(stable phase 평균)와 FC 시점 앞발 ankle Z 좌표의 차이. 신장은 입력값 사용.',
+                interpret: '엘리트 0.80~1.05x. < 0.80x = 추진력 부족 또는 hip mobility 제한, > 1.05x = 과한 stride로 균형 무너질 위험.'
+              },
+              {
+                term: 'Trunk Forward Tilt @BR (몸통 전방 기울기)',
+                def: '공 놓기 시점에 몸통이 시상면(전후)으로 앞쪽으로 기울어진 각도.',
+                meaning: '강한 트렁크 굴곡은 어깨를 더 높이 올리고 릴리스 포인트를 타자 쪽으로 이동시켜 perceived velocity를 높인다.',
+                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 시상면(Y-Z) 내 forward 기울기.',
+                interpret: '엘리트 30~45°. < 30° = 몸통 굴곡 활용 부족, > 50° = 과도하게 숙여 균형/제구 영향.'
+              },
+              {
+                term: 'Trunk Lateral Tilt @BR (몸통 측방 기울기)',
+                def: 'BR 시점에 몸통이 글러브 쪽으로 옆으로 기울어진 각도.',
+                meaning: '측방 기울기가 클수록 over-the-top arm slot이 형성되고 직구 수직 break가 향상된다.',
+                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 관상면(X-Y) 내 lateral 기울기.',
+                interpret: '15~35° 범위가 일반적. arm slot에 따라 적절한 값이 다름 (over-the-top 30°+, sidearm 10°-).'
+              },
+              {
+                term: 'Arm slot (팔의 릴리스 각도)',
+                def: 'BR 시점 어깨→손목 벡터가 수평선 대비 이루는 각도.',
+                meaning: '투수의 릴리스 자세 분류. 같은 구속이라도 arm slot에 따라 공의 움직임과 시각적 효과가 달라진다.',
+                method: 'atan2(wrist.y − shoulder.y, sqrt(Δx² + Δz²)) × 180/π.',
+                interpret: '70°+ = over-the-top, 30~70° = three-quarter, 0~30° = sidearm, < 0° = submarine. 본인의 자연 slot 유지가 중요.'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 7 : 6} title="결함 플래그" subtitle="7-요인 등급 + 12종 세부 발생률">
             <FaultGrid faultRates={faultRates} factors={factors}/>
             {(() => { const s = summarizeFaults(faultRates, factors); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: '7-요인 종합 등급 (F1~F7)',
+                def: '투구 동작을 7개 동작 영역으로 묶어 각각 A~D 등급으로 평가한 결과.',
+                meaning: '12종 세부 결함과 키네매틱스 지표를 영역별로 종합해 코칭 우선순위를 파악하는 도구. 어느 영역이 가장 약한지 한눈에 확인.',
+                method: '각 요인별로 관련 키네매틱스 지표(범위 등급)와 결함 발생률 등급을 평균해 A(우수)~D(개선 필요) 부여.',
+                interpret: 'F1 앞발 착지 / F2 골반-몸통 분리 / F3 어깨-팔 타이밍 / F4 앞 무릎 안정성 / F5 몸통 기울기 / F6 머리·시선 안정성 / F7 그립·릴리스 정렬. D 등급 영역부터 우선 개선.'
+              },
+              {
+                term: '12종 세부 결함 발생률',
+                def: 'Uplift가 각 트라이얼별로 평가하는 12개 결함 항목의 발생 빈도(트라이얼 중 결함 검출된 비율).',
+                meaning: '동작의 일관성과 안정성 평가. 같은 결함이 반복적으로 나타나면 우연이 아닌 습관성 문제.',
+                method: 'Uplift export의 sway / hanging_back / flying_open / knee_collapse / high_hand / early_release / elbow_hike / arm_drag / forearm_flyout / late_rise / getting_out / closing_FB 등 binary 플래그 0/1 비율.',
+                interpret: '0% (녹색) = 발생 없음, 1~30% (주황) = 간헐적, 30%+ (빨강) = 습관성 결함. 50% 이상은 즉시 개선 대상.'
+              },
+              {
+                term: '주요 결함 의미 정리',
+                def: '12종 결함 항목의 야구 현장 의미.',
+                meaning: '각 결함이 구속·제구·부상에 미치는 영향을 이해하면 우선순위 결정에 도움.',
+                method: '플래그 hover 시 설명 표시.',
+                interpret: '몸통 좌우 흔들림(sway), 체중 뒷다리 잔존(hangingBack), 몸통 조기 회전(flyingOpen, 큰 누수), 앞 무릎 안쪽 무너짐(kneeCollapse, 큰 누수), 글러브 손 너무 높음(highHand), 조기 릴리스(earlyRelease, 제구 영향), 팔꿈치 솟구침(elbowHike, 팔꿈치 부상), 팔 끌림(armDrag, 어깨 부하), 팔뚝 옆으로 빠짐(forearmFlyout), 몸통 늦게 일어남(lateRise), 몸 앞쪽 쏠림(gettingOut), 앞발 정렬 어긋남(closingFB, 제구 영향).'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 8 : 7} title="제구 능력" subtitle="릴리스 일관성 기반">
             <CommandPanel command={command}/>
             {(() => { const s = summarizeCommand(command); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: '제구 능력 (Command) — 릴리스 일관성 기반 평가',
+                def: '여러 투구 사이의 동작 재현성을 측정하는 지표. 매 투구마다 같은 자세·같은 타이밍·같은 위치에서 공을 놓는 능력.',
+                meaning: '실제 스트라이크 비율(strike rate)과는 다른 차원의 지표지만, 일관된 릴리스가 안정된 제구의 필요조건. 일관성이 낮으면 의도한 곳에 던지기 어렵다.',
+                method: '6개 축의 SD(표준편차) 또는 CV(변동계수)를 측정 → 각 등급(A~D) → 평균으로 종합 등급 산출.',
+                interpret: '종합 A: 모든 축 일관성 우수. B: 대부분 일관. C/D: 한두 축 이상에서 변동 큼 — 약점 축이 어디인지 확인 후 집중 개선.'
+              },
+              {
+                term: '6개 일관성 축',
+                def: '제구 안정성을 좌우하는 6가지 측정 축.',
+                meaning: '각 축은 릴리스 자세의 다른 측면을 평가하며, 약점 축이 무엇이냐에 따라 개선 방향이 달라진다.',
+                method: '각 트라이얼의 측정값에서 통계량 계산.',
+                interpret: '① 손목 높이(SD cm): 릴리스 포인트 수직 일관성, ② Arm slot(SD °): 팔 각도 일관성, ③ 몸통 기울기(SD °): 몸통 자세 일관성, ④ Layback(CV %): MER 일관성, ⑤ Stride(CV %): 보폭 일관성, ⑥ FC→BR 시간(CV %): 동작 타이밍 일관성. SD/CV가 낮을수록 우수.'
+              },
+              {
+                term: '6각 다이어그램 해석',
+                def: '6축 각각의 등급을 시각화한 레이더 차트.',
+                meaning: '한눈에 어떤 영역이 강하고 어떤 영역이 약한지 파악.',
+                method: '각 축의 등급(A=4, B=3, C=2, D=1)을 외곽→중앙으로 매핑해 닫힌 다각형 그림.',
+                interpret: '외곽(녹색 띠)에 가까울수록 일관성 높음(엘리트). 중앙(빨간 띠)에 가까운 축이 약점. 다각형이 균형있게 외곽에 가까울수록 종합 우수.'
+              }
+            ]}/>
           </Section>
 
           <Section n={videoUrl ? 9 : 8} title="강점 · 개선점" subtitle="자동 평가">
@@ -1587,34 +1943,6 @@
             </div>
           </Section>
 
-          {analysis.trainingTips && analysis.trainingTips.length > 0 && (
-            <Section n={videoUrl ? 10 : 9} title="추천 트레이닝 · 드릴" subtitle={`${analysis.trainingTips.length}개 항목`}>
-              <div className="space-y-3">
-                {analysis.trainingTips.map((tip, idx) => (
-                  <div key={idx} className="training-card">
-                    <div className="flex items-start gap-2 mb-2">
-                      <div className="flex-shrink-0 w-6 h-6 rounded-full text-[11.5px] font-bold flex items-center justify-center"
-                        style={{ background: '#f59e0b', color: '#1f1408' }}>
-                        {idx + 1}
-                      </div>
-                      <div className="training-issue">{tip.issue}</div>
-                    </div>
-                    <ul className="ml-8 space-y-1.5">
-                      {tip.drills.map((d, j) => (
-                        <li key={j} className="leading-relaxed">
-                          <span className="training-drill-name">▸ {d.name}</span>
-                          <span className="training-drill-desc"> — {d.desc}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-                <div className="text-[11px] italic px-2" style={{ color: '#94a3b8' }}>
-                  ※ 위 드릴은 일반적 권장사항이며, 실제 적용 시에는 선수의 부상 이력·체력·기술 수준을 고려해 코치 지도하에 진행해주세요.
-                </div>
-              </div>
-            </Section>
-          )}
           </>
           )}
 
