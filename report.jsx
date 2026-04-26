@@ -585,7 +585,8 @@
   }
 
   function Stat({ label, value, unit, decimals = 1, highlight }) {
-    const display = value != null && !isNaN(value) ? value.toFixed(decimals) : '—';
+    const num = typeof value === 'number' ? value : parseFloat(value);
+    const display = (num != null && !isNaN(num)) ? num.toFixed(decimals) : '—';
     return (
       <div className={`border rounded-md p-2.5 ${highlight ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
         <div className="text-[10px] font-bold tracking-wide text-slate-500 uppercase">{label}</div>
