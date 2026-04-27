@@ -1565,7 +1565,49 @@
                 return { ...m, data: null };
               }
             }));
-            setTrials(restored);
+
+            // ─────────────────────────────────────────────────────────────
+            // v41 — Recompute preview + re-evaluate auto-exclusion on load.
+            // The IDB stores preview values computed at upload time. If the
+            // user uploaded trials before the v40 maxER 150~210° validation
+            // was added, those previews contain garbage values (e.g. Max ER
+            // = 7.2°) that bypass the new validation entirely. Same for the
+            // excludeFromAnalysis flag: if a trial was auto-excluded under
+            // the old 1-metric threshold, the flag persists even after the
+            // threshold was raised to 2. Recomputing here ensures the report
+            // always reflects the *current* analysis logic, not a stale snapshot.
+            let withFreshPreview = restored;
+            if (window.BBLPreview && typeof window.BBLPreview.extract === 'function') {
+              withFreshPreview = restored.map(t => {
+                if (t.data && t.data.length) {
+                  try {
+                    const preview = window.BBLPreview.extract(t);
+                    return { ...t, preview };
+                  } catch (e) {
+                    return { ...t, preview: null };
+                  }
+                }
+                return { ...t, preview: null };
+              });
+
+              // Re-run outlier detection with v40 logic (2+ metrics flagged)
+              if (typeof window.BBLPreview.detectOutliers === 'function') {
+                try {
+                  const out = window.BBLPreview.detectOutliers(withFreshPreview);
+                  withFreshPreview = withFreshPreview.map(t => {
+                    const flags = (out.reasons && out.reasons[t.id]) || [];
+                    // Auto-exclude when 2+ metrics violate; clear stale flags
+                    // when criteria no longer met (overrides legacy 1-metric
+                    // exclusions saved in IDB by older versions).
+                    return { ...t, excludeFromAnalysis: flags.length >= 2 };
+                  });
+                } catch (e) {
+                  // If outlier detection throws, keep existing flags
+                }
+              }
+            }
+
+            setTrials(withFreshPreview);
           }
           // Restore video
           try {

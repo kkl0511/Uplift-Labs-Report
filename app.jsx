@@ -2217,7 +2217,9 @@ function QuickAnalysisPage({ onOpenReport }) {
 
       // Save to IndexedDB in the same shape PitcherInputForm uses, so
       // ReportView can load it via its existing IDB-loading code path.
-      const STORAGE_KEY = 'pitcher:current';
+      // v41: unified key 'pitcher:draft' (was 'pitcher:current' which caused
+      // ReportView to read stale data from a previous PitcherInputForm session).
+      const STORAGE_KEY = 'pitcher:draft';
       const trialMetas = trials.map(t => ({
         id: t.id,
         label: t.label,
@@ -2233,6 +2235,10 @@ function QuickAnalysisPage({ onOpenReport }) {
       ));
       // Clear any stale benchmarks/video from a previous session
       try { await idbKeyval.del('pitcher:benchmarks'); } catch (e) {}
+      try { await idbKeyval.del('pitcher:video'); } catch (e) {}
+      // v41 migration: clean up legacy 'pitcher:current' entries left over
+      // from before the storage-key unification, so they don't accumulate.
+      try { await idbKeyval.del('pitcher:current'); } catch (e) {}
       try { await idbKeyval.del('pitcher:current:video'); } catch (e) {}
 
       onOpenReport();
@@ -2568,6 +2574,17 @@ function App() {
 }
 
 // ---------- Mount ----------
+// v41: Expose preview helpers globally so report.jsx can recompute previews
+// and re-evaluate auto-exclusion when loading from IndexedDB. Without this,
+// stale preview values (e.g. invalid Max ER computed before the v40 150~210°
+// validation was added) would persist forever in IDB and trigger over-eager
+// trial exclusion in the report view.
+window.BBLPreview = {
+  extract: extractPreviewMetrics,
+  detectOutliers: detectTrialOutliers,
+  version: 41
+};
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 
