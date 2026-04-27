@@ -2058,9 +2058,27 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 5 : 4} title="키네틱 체인 에너지 흐름 & 리크"
-            subtitle={`종합 누수율 ${fmt.n1(energy.leakRate)}%`}>
-            <window.BBLCharts.EnergyFlow energy={toEnergyProps(analysis)}/>
+          <Section n={videoUrl ? 5 : 4} title="키네틱 체인 & 정밀 지표 통합 분석"
+            subtitle={`종합 누수율 ${fmt.n1(energy.leakRate)}% · 5편 논문 기반 정밀 지표 포함`}>
+            <div className="text-[10.5px] mb-2" style={{ color: '#94a3b8' }}>
+              한 마네킹에 전신 키네틱 체인의 에너지 흐름과 5편 논문 기반 정밀 지표를 모두 표시했습니다.
+              하단 분절 운동에너지·전이 비율 카드와 정밀 지표 카드는 마네킹의 색·맥동에 대응됩니다.
+            </div>
+            {window.BBLCharts && window.BBLCharts.IntegratedKineticDiagram ? (
+              <window.BBLCharts.IntegratedKineticDiagram
+                energy={toEnergyProps(analysis)}
+                precision={{
+                  elbowEff:         summary.elbowLoadEfficiency?.mean,
+                  cockPowerWPerKg:  summary.cockingPhaseArmPowerWPerKg?.mean,
+                  transferTA_KE:    summary.transferTA_KE?.mean,
+                  legAsymmetry:     summary.legAsymmetryRatio?.mean,
+                  peakPivotHipVel:  summary.peakPivotHipVel?.mean,
+                  peakStrideHipVel: summary.peakStrideHipVel?.mean
+                }}
+              />
+            ) : (
+              <window.BBLCharts.EnergyFlow energy={toEnergyProps(analysis)}/>
+            )}
 
             {/* Segment kinetic energy & power (estimation-based) */}
             {summary.KE_arm?.mean != null && (
@@ -2275,28 +2293,11 @@
                   </span>
                 </div>
                 <div className="text-[10.5px] mb-2" style={{ color: '#94a3b8' }}>
-                  최신 야구 생체역학 논문 5편의 핵심 지표를 한 자리에 모았습니다. 마네킹과 함께 보세요.
+                  최신 야구 생체역학 논문 5편의 핵심 지표를 카드로 정리했습니다. 위쪽 통합 마네킹의 맥동 링·화살표가 각 지표에 대응됩니다.
                 </div>
                 <div className="text-[9.5px] italic mb-2" style={{ color: '#475569' }}>
                   출처: Howenstein 2019 (Med Sci Sports Exerc), Wasserberger 2024 (Sports Biomech), Aguinaldo &amp; Escamilla 2022 (Sports Biomech), Naito 2011, de Swart 2022 (Sports Biomech).
                 </div>
-
-                {/* v41 — Mannequin diagram visualizing the 4 precision metrics
-                    on body keypoints (elbow load · shoulder cocking power ·
-                    trunk amplification · pivot/stride leg asymmetry).
-                    Renders only when at least one metric is available. */}
-                {window.BBLCharts && window.BBLCharts.PrecisionEnergyDiagram && (
-                  <div className="mb-3">
-                    <window.BBLCharts.PrecisionEnergyDiagram precision={{
-                      elbowEff:         summary.elbowLoadEfficiency?.mean,
-                      cockPowerWPerKg:  summary.cockingPhaseArmPowerWPerKg?.mean,
-                      transferTA_KE:    summary.transferTA_KE?.mean,
-                      legAsymmetry:     summary.legAsymmetryRatio?.mean,
-                      peakPivotHipVel:  summary.peakPivotHipVel?.mean,
-                      peakStrideHipVel: summary.peakStrideHipVel?.mean
-                    }}/>
-                  </div>
-                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {/* (1) Howenstein Joint Load Efficiency.
