@@ -1423,6 +1423,85 @@
     );
   }
 
+  // ============================================================
+  // QuickShareButton — generates a self-contained shareable URL
+  // (no GitHub upload, no token needed)
+  //
+  // 동작 원리:
+  //  1. 리포트 데이터(pitcher + analysis + benchAnalyses)를 JSON으로 직렬화
+  //  2. LZString으로 압축 + URL-safe 인코딩
+  //  3. #/share/<압축데이터> 형태의 URL로 만들어 클립보드 복사
+  //
+  // 장점: GitHub 토큰 불필요, 즉시 생성, 대기 시간 없음
+  // 단점: URL이 길어질 수 있음 (분석 데이터 크기에 따라 수 KB)
+  //       — 메신저(카톡 등)에서 잘릴 수 있음 → 그럴 땐 GitHub 방식 사용
+  // ============================================================
+  function QuickShareButton({ pitcher, analysis, benchAnalyses }) {
+    const [busy, setBusy] = useState(false);
+
+    const stripBenchTrials = (b) => ({
+      ...b,
+      trials: undefined,
+      videoBlob: undefined,
+      analysis: b.analysis || null,
+      resolvedPitcher: b.resolvedPitcher
+    });
+
+    const onClick = async () => {
+      if (!window.LZString) {
+        alert('LZString 라이브러리가 로드되지 않았습니다. 페이지를 새로고침하세요.');
+        return;
+      }
+      setBusy(true);
+      try {
+        const payload = {
+          v: 1,
+          pitcher,
+          analysis,
+          benchAnalyses: (benchAnalyses || []).map(stripBenchTrials),
+          createdAt: new Date().toISOString()
+        };
+        const json = JSON.stringify(payload);
+        const compressed = window.LZString.compressToEncodedURIComponent(json);
+        const url = `${window.location.origin}${window.location.pathname}#/share/${compressed}`;
+        const sizeKB = (url.length / 1024).toFixed(1);
+
+        try { await navigator.clipboard.writeText(url); } catch (e) {}
+
+        let warning = '';
+        if (url.length > 8000) {
+          warning = `\n\n⚠️ URL 길이가 ${sizeKB}KB로 깁니다.\n카카오톡 등 일부 메신저에서 잘릴 수 있습니다.\n그럴 경우 옆의 'GitHub 링크' 버튼(짧은 URL)을 사용하세요.`;
+        }
+
+        const msg = `즉시 공유 링크 생성 완료 (클립보드에 복사됨)\n\n${url}\n\nURL 크기: ${sizeKB} KB\n✓ GitHub 설정 불필요\n✓ 즉시 사용 가능 (대기 시간 없음)\n✓ 데이터가 URL에 포함되어 있어 영구 유효${warning}`;
+
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: `${pitcher?.name || '선수'} 리포트`, text: 'BBL 투수 분석 리포트', url });
+          } catch (e) {
+            alert(msg);
+          }
+        } else {
+          alert(msg);
+        }
+      } catch (e) {
+        alert(`링크 생성 실패: ${e.message}`);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    return (
+      <button
+        onClick={onClick}
+        disabled={busy}
+        className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border border-blue-400/40 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition disabled:opacity-50 print:hidden"
+        title="GitHub 없이 즉시 선수용 링크를 만들어 클립보드로 복사 (URL에 데이터 포함)">
+        <span>🔗</span> {busy ? '생성 중...' : '즉시 링크'}
+      </button>
+    );
+  }
+
   function ShareReportButton({ pitcher, analysis, benchAnalyses }) {
     const [showSetup, setShowSetup] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -1496,7 +1575,7 @@
             disabled={busy}
             className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition disabled:opacity-50"
             title="이 리포트를 짧은 URL로 만들어 선수에게 전달">
-            <span>🔗</span> {busy ? '업로드 중...' : '선수용 링크 생성'}
+            <span>🔗</span> {busy ? '업로드 중...' : 'GitHub 링크'}
           </button>
           <button
             onClick={() => setShowSetup(true)}
@@ -1773,11 +1852,18 @@
             </div>
             <div className="flex items-center gap-2">
               {!isShared && analysis && (
-                <ShareReportButton
-                  pitcher={pitcher}
-                  analysis={analysis}
-                  benchAnalyses={benchAnalyses}
-                />
+                <>
+                  <QuickShareButton
+                    pitcher={pitcher}
+                    analysis={analysis}
+                    benchAnalyses={benchAnalyses}
+                  />
+                  <ShareReportButton
+                    pitcher={pitcher}
+                    analysis={analysis}
+                    benchAnalyses={benchAnalyses}
+                  />
+                </>
               )}
               <button onClick={() => window.print()} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition">
                 <IconPrint size={13}/> 인쇄 / PDF
@@ -2617,14 +2703,31 @@
                 lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
             </div>
 
+            {/* Notice for trials with invalid Max ER (timeseries damage) */}
+            {(() => {
+              const invalidTrials = perTrialStats
+                .map((s, idx) => ({ s, idx }))
+                .filter(({ s }) => s.maxER_invalid);
+              if (invalidTrials.length === 0) return null;
+              return (
+                <div className="mt-2 px-3 py-2 rounded text-[11.5px]"
+                     style={{ background:'#1f1408', color:'#fbbf24', border:'1px solid #f59e0b40' }}>
+                  ⚠ Max ER 계산 불가 (시계열 손상) ·
+                  {' '}{invalidTrials.length}/{perTrialStats.length}개 trial{' '}
+                  ({invalidTrials.map(({ idx }) => `T${idx+1}`).join(', ')}) —
+                  {' '}어깨 외회전 시계열이 정상 범위(150~210°)를 벗어남. 해당 trial은 Max ER 평균 계산에서 자동 제외됨.
+                </div>
+              );
+            })()}
+
             {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
             <InfoBox items={[
               {
                 term: 'Max ER (Maximum External Rotation, 최대 어깨 외회전)',
-                def: '공 놓기 직전 cocking 자세에서 어깨가 외회전한 최대 각도(°) — 흔히 "layback"이라고도 부른다. 어깨 관절의 humerothoracic axial rotation 측정.',
+                def: '공 놓기 직전 cocking 자세에서 어깨가 외회전한 최대 각도(°) — 흔히 "layback"이라고도 부른다. 어깨 관절의 humero-thoracic external rotation 측정.',
                 meaning: '팔이 뒤로 최대로 젖혀지면서 발생하는 신장반사(stretch reflex)와 견갑하근·대원근의 elastic energy storage가 팔의 빠른 internal rotation으로 전환된다. 이 각도가 클수록 더 빠른 공이 가능 (Werner et al. 1993, J Orthop Sports Phys Ther 17:274-278). Wight et al. 2004 (J Athl Train 39:381)는 max ER이 ball velocity의 가장 강한 단일 운동학 예측인자(r=0.59)임을 입증.',
-                method: 'Uplift CSV의 right(left)_shoulder_external_rotation 시계열에서 [FC, BR] 윈도우 내 최댓값. 시계열 unwrap(인접 프레임 차이 >180°면 ±360° 보정)으로 wraparound 노이즈 제거.',
-                interpret: '엘리트 투수 170~195° (Crotin & Ramsey 2014, Med Sci Sports Exerc 46:565-571 — collegiate 평균 178°, MLB 평균 182°). < 155° = 가동성 부족 (전방 어깨 capsular tightness 가능), > 200° = 측정 오류 또는 과도한 부하 (어깨 부상 위험 — Reagan et al. 2002, Am J Sports Med 30:354-360).'
+                method: 'Uplift CSV의 right(left)_shoulder_external_rotation 시계열에서 BR(공 놓는 시점) 기준 [-150ms, +30ms] 윈도우 내 최댓값. 단위 자동 감지(rad↔deg), wraparound unwrap 적용. 학술 정상 범위(150~210°)를 벗어나면 해당 trial은 "계산 불가 (시계열 손상)"로 표시되며 평균 계산에서 제외 — 다른 값으로 대체하지 않음.',
+                interpret: '엘리트 투수 170~195° (Crotin & Ramsey 2014, Med Sci Sports Exerc 46:565-571 — collegiate 평균 178°, MLB 평균 182°). < 155° = 가동성 부족 (전방 어깨 capsular tightness 가능), > 200° = 측정 오류 또는 과도한 부하 (어깨 부상 위험 — Reagan et al. 2002, Am J Sports Med 30:354-360). 시계열이 손상된 trial은 측정 신뢰도가 없으므로 평균 산출에서 제외하는 것이 적절.'
               },
               {
                 term: 'X-factor (골반-몸통 분리각, Hip-Shoulder Separation)',

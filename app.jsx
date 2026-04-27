@@ -141,56 +141,54 @@ function extractPreviewMetrics(trial) {
   const armSide = handedness === 'L' ? 'left' : 'right';
   const frontSide = handedness === 'L' ? 'right' : 'left';
 
-  // Max ER with wraparound unwrapping + radians-vs-degrees auto-detect
-  const erCol = `${armSide}_shoulder_external_rotation`;
-  // Detect units (radians if max abs < 4)
-  let scanMax = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const v = rows[i][erCol];
-    if (v != null && !isNaN(v)) {
-      const a = Math.abs(v);
-      if (a > scanMax) scanMax = a;
+  // Max ER (v39): timeseries-based with BR-anchored window, falls back to
+  // Uplift's max_layback_angle if timeseries is unreliable.
+  let maxER = null;
+  {
+    const erCol = `${armSide}_shoulder_external_rotation`;
+    // Detect units (radians vs degrees)
+    let scanMax = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const v = rows[i][erCol];
+      if (v != null && !isNaN(v)) {
+        const a = Math.abs(v);
+        if (a > scanMax) scanMax = a;
+      }
     }
-  }
-  const isRadians = scanMax > 0 && scanMax < 4;
-  const unitScale = isRadians ? (180 / Math.PI) : 1;
-
-  const unwrapped = [];
-  let prev = null, offset = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const raw = rows[i][erCol];
-    if (raw == null || isNaN(raw)) { unwrapped.push(null); continue; }
-    const inDeg = raw * unitScale;
-    if (prev != null) {
-      const diff = (inDeg + offset) - prev;
-      if (diff > 180) offset -= 360;
-      else if (diff < -180) offset += 360;
+    const isRadians = scanMax > 0 && scanMax < 4;
+    const unitScale = isRadians ? (180 / Math.PI) : 1;
+    // Unwrap
+    const unwrapped = [];
+    let prev = null, offset = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const raw = rows[i][erCol];
+      if (raw == null || isNaN(raw)) { unwrapped.push(null); continue; }
+      const inDeg = raw * unitScale;
+      if (prev != null) {
+        const diff = (inDeg + offset) - prev;
+        if (diff > 180) offset -= 360;
+        else if (diff < -180) offset += 360;
+      }
+      const adj = inDeg + offset;
+      unwrapped.push(adj);
+      prev = adj;
     }
-    const adj = inDeg + offset;
-    unwrapped.push(adj);
-    prev = adj;
-  }
-  // Try Uplift's max_external_rotation_frame first (authoritative)
-  let maxER = -Infinity;
-  const merFrameRaw = r0.max_external_rotation_frame;
-  if (Number.isFinite(merFrameRaw)) {
-    const merFrameIdx = -merFrameRaw;
-    if (Number.isInteger(merFrameIdx) && merFrameIdx >= 0 && merFrameIdx < rows.length) {
-      const v = unwrapped[merFrameIdx];
-      if (v != null && v > 100) maxER = v;
-    }
-  }
-  // Fallback: search FC-100ms to BR+30ms (wider than just FC..BR)
-  if (maxER === -Infinity) {
-    const winPad = Math.round(0.100 * fps);
+    // BR-anchored window: BR-150ms to BR+30ms
+    const leadPad = Math.round(0.150 * fps);
     const trailPad = Math.round(0.030 * fps);
-    const winStart = Math.max(0, fcRow - winPad);
+    const winStart = Math.max(0, brRow - leadPad);
     const winEnd = Math.min(rows.length - 1, brRow + trailPad);
+    let tsMax = -Infinity;
     for (let i = winStart; i <= winEnd; i++) {
-      if (unwrapped[i] != null && unwrapped[i] > maxER) maxER = unwrapped[i];
+      if (unwrapped[i] != null && unwrapped[i] > tsMax) tsMax = unwrapped[i];
     }
+    // Validate: only accept timeseries result in academic-valid range
+    if (tsMax > -Infinity && tsMax >= 150 && tsMax <= 210) {
+      maxER = tsMax;
+    }
+    // Otherwise leave maxER = null (no fallback). Outlier detection will
+    // simply skip this trial for the maxER metric.
   }
-  if (maxER === -Infinity) maxER = null;
 
   // Max X-factor (FC-100ms ~ FC+50ms)
   let maxXF = -Infinity;
