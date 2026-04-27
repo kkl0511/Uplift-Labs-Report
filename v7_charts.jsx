@@ -860,29 +860,31 @@
     const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
 
     // Right-handed pose keypoints — LAYBACK / MER (Maximum External Rotation):
-    // upper arm abducted (elbow elevated above shoulder line),
-    // elbow BENT ~70° so forearm hangs DOWNWARD toward the ground,
-    // wrist directly below elbow, ball just past wrist.
-    // This pose clearly shows the bent-elbow cocking shape and gives
-    // a clean L-shaped path for visualizing energy flow shoulder→elbow
-    // →wrist→ball along the throwing arm.
+    // matches classic late-cocking / MER photo pose:
+    //   - upper arm rotated externally so elbow is at head height,
+    //     slightly behind the shoulder line
+    //   - elbow flexed ~90° so forearm points UPWARD (vertical, slightly back)
+    //   - wrist laid back (slightly behind elbow) at top of arm
+    //   - ball above head height, hand slightly behind wrist
+    // This gives a clean inverted-L arm shape and clear path for visualizing
+    // energy flow shoulder→elbow→wrist→ball.
     const K = {
-      head:     [400, 95],
-      neck:     [402, 138],
-      rShoulder:[450, 165],
-      rElbow:   [582, 115],   // elevated, far right (well above shoulder)
-      rWrist:   [560, 245],   // below elbow, angled slightly back toward body (layback)
-      ball:     [553, 268],   // ball just below wrist, at hand position
-      lShoulder:[365, 158],
-      lElbow:   [305, 175],
-      lWrist:   [355, 218],
-      pelvisR:  [430, 280],
-      pelvisL:  [375, 280],
-      pelvisC:  [402, 280],
-      rKnee:    [482, 358],   // pivot leg (back, R-handed)
-      rAnkle:   [550, 412],
-      lKnee:    [305, 384],   // stride leg (front, R-handed)
-      lAnkle:   [265, 470]
+      head:     [400, 115],
+      neck:     [402, 158],
+      rShoulder:[450, 185],
+      rElbow:   [515, 115],
+      rWrist:   [500, 50],
+      ball:     [475, 30],
+      lShoulder:[365, 178],
+      lElbow:   [305, 195],
+      lWrist:   [355, 238],
+      pelvisR:  [430, 300],
+      pelvisL:  [375, 300],
+      pelvisC:  [402, 300],
+      rKnee:    [482, 378],
+      rAnkle:   [550, 432],
+      lKnee:    [305, 404],
+      lAnkle:   [265, 488]
     };
 
     // Tone selectors based on literature thresholds
@@ -1153,7 +1155,7 @@
           {/* ① Howenstein — 팔꿈치 부담 (top right) */}
           {elbowEff != null && (
             <g>
-              <line x1={K.rElbow[0] + 14} y1={K.rElbow[1] - 14} x2="612" y2="118" stroke={TONES[elbowTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
+              <line x1={K.rElbow[0] + 14} y1={K.rElbow[1] - 4} x2="612" y2="118" stroke={TONES[elbowTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
               <rect x="588" y="84" width="184" height="62" rx="6" fill="#0b1220" stroke={TONES[elbowTone].color} strokeOpacity="0.7"/>
               <text x="680" y="100" fill={TONES[elbowTone].color} fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">① 팔꿈치 부담</text>
               <text x="680" y="120" fill="#e2e8f0" fontSize="15" fontWeight="800" textAnchor="middle">{elbowEff.toFixed(2)} N·m/(m/s)</text>
