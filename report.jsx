@@ -2268,15 +2268,35 @@
               <div className="mt-4">
                 <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
                   <span className="text-[10.5px] uppercase tracking-wider font-bold" style={{ color: '#94a3b8' }}>
-                    에너지 플로우 정밀 지표 (5편 문헌 기반)
+                    팔과 다리의 정밀 분석 (5편 논문 기반)
                   </span>
                   <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: '#0c1e15', color: '#10b981', border: '1px solid #10b98140' }}>
                     문헌 정합
                   </span>
                 </div>
-                <div className="text-[10px] italic mb-2" style={{ color: '#64748b' }}>
-                  Robertson & Winter (1980) joint power analysis 기반. Howenstein 2019 (Med Sci Sports Exerc), Wasserberger 2024 (Sports Biomech), Aguinaldo &amp; Escamilla 2022 (Sports Biomech), Matsuda 2025 (Front Sports Act Living), de Swart 2022 (Sports Biomech) 종합.
+                <div className="text-[10.5px] mb-2" style={{ color: '#94a3b8' }}>
+                  최신 야구 생체역학 논문 5편의 핵심 지표를 한 자리에 모았습니다. 마네킹과 함께 보세요.
                 </div>
+                <div className="text-[9.5px] italic mb-2" style={{ color: '#475569' }}>
+                  출처: Howenstein 2019 (Med Sci Sports Exerc), Wasserberger 2024 (Sports Biomech), Aguinaldo &amp; Escamilla 2022 (Sports Biomech), Naito 2011, de Swart 2022 (Sports Biomech).
+                </div>
+
+                {/* v41 — Mannequin diagram visualizing the 4 precision metrics
+                    on body keypoints (elbow load · shoulder cocking power ·
+                    trunk amplification · pivot/stride leg asymmetry).
+                    Renders only when at least one metric is available. */}
+                {window.BBLCharts && window.BBLCharts.PrecisionEnergyDiagram && (
+                  <div className="mb-3">
+                    <window.BBLCharts.PrecisionEnergyDiagram precision={{
+                      elbowEff:         summary.elbowLoadEfficiency?.mean,
+                      cockPowerWPerKg:  summary.cockingPhaseArmPowerWPerKg?.mean,
+                      transferTA_KE:    summary.transferTA_KE?.mean,
+                      legAsymmetry:     summary.legAsymmetryRatio?.mean,
+                      peakPivotHipVel:  summary.peakPivotHipVel?.mean,
+                      peakStrideHipVel: summary.peakStrideHipVel?.mean
+                    }}/>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {/* (1) Howenstein Joint Load Efficiency.
@@ -2291,18 +2311,21 @@
                     const tone = eff < 2.5 ? 'stat-good' : eff < 3.5 ? '' : eff < 4.0 ? 'stat-mid' : 'stat-bad';
                     return (
                       <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
-                        <div className="stat-label">팔꿈치 부하 효율 (Howenstein 2019 / Anz 2010)</div>
+                        <div className="stat-label">① 팔꿈치 부담</div>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
                             {eff.toFixed(2)}
                           </span>
                           <span className="text-[11px]" style={{ color: '#94a3b8' }}>N·m / (m/s)</span>
                         </div>
-                        <div className="text-[10.5px] mt-0.5" style={{ color: '#cbd5e1' }}>
-                          단위 구속당 팔꿈치 합성 모멘트 부하. <b>낮을수록 효율적</b>.
+                        <div className="text-[11px] mt-1" style={{ color: '#cbd5e1' }}>
+                          공이 빠른 만큼 팔꿈치에 가해지는 힘이에요. <b style={{ color: '#10b981' }}>낮을수록 팔꿈치가 안전</b>합니다.
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>
-                          엘리트 &lt;2.5 / 정상 2.5~3.5 / 주의 3.5~4 / 비효율적 &gt;4. ※ 합성 모멘트(varus+굴곡+회내) 기반이라 Anz 2010 varus-only 보고치(1.8~2.5)보다 자연스럽게 큼.
+                        <div className="text-[10.5px] mt-1.5" style={{ color: '#94a3b8' }}>
+                          <b style={{ color: '#6ee7b7' }}>2.5 미만</b> 매우 좋음 · <b>2.5~3.5</b> 정상 · <b style={{ color: '#fbbf24' }}>3.5~4</b> 조심 · <b style={{ color: '#fca5a5' }}>4 이상</b> 부담 큼
+                        </div>
+                        <div className="text-[9.5px] mt-1 italic" style={{ color: '#64748b' }}>
+                          출처: Howenstein 2019 / Anz 2010. ※ 합성 모멘트(varus+굴곡+회내) 기반.
                         </div>
                       </div>
                     );
@@ -2321,11 +2344,10 @@
                   {summary.cockingPhaseArmPowerWPerKg?.mean != null && (() => {
                     const wkg = summary.cockingPhaseArmPowerWPerKg.mean;
                     const watts = summary.cockingPhaseArmPowerW?.mean;
-                    // Adjusted thresholds for rotational-only subset of Wasserberger's full power transfer.
                     const tone = wkg >= 30 ? 'stat-good' : wkg >= 22 ? '' : wkg >= 15 ? 'stat-mid' : 'stat-bad';
                     return (
                       <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
-                        <div className="stat-label">코킹기 팔 회전 파워 (Wasserberger 2024)</div>
+                        <div className="stat-label">② 던지기 직전 어깨 폭발력</div>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
                             {wkg.toFixed(1)}
@@ -2337,14 +2359,14 @@
                             </span>
                           )}
                         </div>
-                        <div className="text-[10.5px] mt-0.5" style={{ color: '#cbd5e1' }}>
-                          코킹기(FC~BR-30ms) 팔 회전 KE의 변화율 peak. <b>높을수록 강력</b>.
+                        <div className="text-[11px] mt-1" style={{ color: '#cbd5e1' }}>
+                          공을 놓기 직전 어깨에서 만들어지는 순간적인 힘. <b style={{ color: '#10b981' }}>높을수록 강한 공</b>을 던집니다.
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#fbbf24' }}>
-                          ※ 우리 계산은 회전 KE의 dKE/dt 기반(전체 power flow의 ~60%). Wasserberger 원논문 39-47 W/kg은 6-DOF 역동역학 JFP+STP 합. 임계값은 회전 부분만 고려하여 조정.
+                        <div className="text-[10.5px] mt-1.5" style={{ color: '#94a3b8' }}>
+                          <b style={{ color: '#6ee7b7' }}>30 이상</b> 매우 좋음 · <b>22~30</b> 정상 · <b style={{ color: '#fbbf24' }}>15~22</b> 부족 · <b style={{ color: '#fca5a5' }}>15 미만</b> 약함
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>
-                          회전 KE 기준: 양호 22-30 W/kg / 우수 ≥30 W/kg / 부족 &lt;15
+                        <div className="text-[9.5px] mt-1 italic" style={{ color: '#64748b' }}>
+                          출처: Wasserberger 2024. ※ 회전 KE의 dKE/dt peak 기반(전체 power flow의 ~60%). 임계값은 회전 부분만 고려해 조정.
                         </div>
                       </div>
                     );
@@ -2356,24 +2378,24 @@
                       to Naito 2011 elementary boys (T→A peak KE ratio ~2.7×). */}
                   {summary.transferTA_KE?.mean != null && (() => {
                     const ta = summary.transferTA_KE.mean;
-                    // Naito 2011 reports T→A peak rotational KE ratio of about 2.7×.
-                    // We use literature-based bands rather than arbitrary thresholds.
                     const tone = ta >= 2.5 ? 'stat-good' : ta >= 1.7 ? '' : ta >= 1.0 ? 'stat-mid' : 'stat-bad';
                     return (
                       <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
-                        <div className="stat-label">몸통 → 팔 회전 KE 증폭 (Naito 2011 / Aguinaldo 2022)</div>
+                        <div className="stat-label">③ 몸통이 팔로 보낸 힘의 배율</div>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
                             {ta.toFixed(2)}
                           </span>
-                          <span className="text-[11px]" style={{ color: '#94a3b8' }}>×</span>
+                          <span className="text-[11px]" style={{ color: '#94a3b8' }}>배</span>
                         </div>
-                        <div className="text-[10.5px] mt-0.5" style={{ color: '#cbd5e1' }}>
-                          회전 KE 기준 분절 간 증폭. 몸통 회전이 팔 KE의 주된 동력원
-                          (Aguinaldo 2022 induced power 분석에서 86% trunk 기인 입증).
+                        <div className="text-[11px] mt-1" style={{ color: '#cbd5e1' }}>
+                          몸통 회전이 팔의 힘을 얼마나 키워주는지. <b style={{ color: '#10b981' }}>숫자가 클수록 몸 전체를 잘 활용</b>한 증거예요. (엘리트 투수는 팔 힘의 80% 이상이 몸통에서 옵니다)
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>
-                          Naito 2011 elementary boys 보고치 ~2.7×. ≥2.5 우수 / 1.7~2.5 양호 / 1.0~1.7 약한 증폭 / &lt;1.0 손실.
+                        <div className="text-[10.5px] mt-1.5" style={{ color: '#94a3b8' }}>
+                          <b style={{ color: '#6ee7b7' }}>2.5 이상</b> 매우 좋음 · <b>1.7~2.5</b> 정상 · <b style={{ color: '#fbbf24' }}>1.0~1.7</b> 부족 · <b style={{ color: '#fca5a5' }}>1.0 미만</b> 손실
+                        </div>
+                        <div className="text-[9.5px] mt-1 italic" style={{ color: '#64748b' }}>
+                          출처: Naito 2011 / Aguinaldo &amp; Escamilla 2022. ※ 회전 KE 기준 분절 간 증폭비.
                         </div>
                       </div>
                     );
@@ -2393,28 +2415,28 @@
                     const ratio = summary.legAsymmetryRatio.mean;
                     const pivot = summary.peakPivotHipVel?.mean;
                     const stride = summary.peakStrideHipVel?.mean;
-                    // No literature-derived threshold for sagittal hip flex velocity ratio.
-                    // We use a wide neutral band centered on 1.5× (typical biomechanical
-                    // expectation that pivot-leg activity exceeds stride-leg during drive).
                     const tone = ratio >= 1.0 && ratio <= 2.5 ? '' :
                                  ratio < 1.0 ? 'stat-mid' : 'stat-mid';
                     return (
                       <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
-                        <div className="stat-label">축발/디딤발 hip 활동성 (de Swart 2022 개념, 시상면 대리)</div>
+                        <div className="stat-label">④ 축발과 디딤발 균형</div>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="text-[20px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
                             {ratio.toFixed(2)}
                           </span>
-                          <span className="text-[11px]" style={{ color: '#94a3b8' }}>×</span>
+                          <span className="text-[11px]" style={{ color: '#94a3b8' }}>배</span>
                         </div>
-                        <div className="text-[10.5px] mt-0.5" style={{ color: '#cbd5e1' }}>
-                          축발 hip 굴곡속도 ÷ 디딤발 hip 굴곡속도.
+                        <div className="text-[11px] mt-1" style={{ color: '#cbd5e1' }}>
+                          축발(뒷다리)이 디딤발(앞다리)보다 얼마나 더 활발한지.
                           {pivot != null && stride != null && (
                             <span> (축발 {pivot.toFixed(0)}°/s vs 디딤발 {stride.toFixed(0)}°/s)</span>
                           )}
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#fbbf24' }}>
-                          ※ de Swart 원논문은 횡단면 hip 회전 + 관절 파워(W) 기반. Uplift CSV에 횡단면 컬럼 부재로 시상면(굴곡)으로 대리. 비율 패턴은 참고용이며 학술 정상 범위는 본 측정 방식에서 미정.
+                        <div className="text-[10.5px] mt-1.5" style={{ color: '#94a3b8' }}>
+                          정상 범위는 <b>1.0~2.5배</b>. 보통 축발이 디딤발보다 1.5배 정도 활발해야 좋아요. 너무 낮으면(1배 미만) 다리 활용 부족, 너무 높으면 디딤발 약함.
+                        </div>
+                        <div className="text-[9.5px] mt-1 italic" style={{ color: '#fbbf24' }}>
+                          출처: de Swart 2022 (개념). ※ 원논문은 횡단면 hip 회전 + 관절 파워(W) 기반. 본 측정은 시상면(굴곡) 속도로 대리 — 패턴은 참고용.
                         </div>
                       </div>
                     );

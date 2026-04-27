@@ -329,3 +329,22 @@ html, body {
 .report-dark a { color: #93c5fd; }
 .report-dark hr { border-color: #1e2a47; }
 
+
+/* =============================================================
+   PC/DESKTOP READABILITY (v41)
+   리포트 페이지의 글자 크기를 PC 화면에서 자동 확대.
+   `zoom`은 viewport는 그대로 두고 시각적 크기만 키우므로 SVG 차트, Tailwind
+   text-[Xpx] 인라인 사이즈, 모든 자식 요소가 비율대로 함께 커집니다.
+   레이아웃의 max-width(1024px)는 zoom 후에도 화면 가운데에 정렬되므로
+   가로 스크롤이 생기지 않습니다. 인쇄(@media print)에는 적용 안 됨.
+   ============================================================= */
+@media screen and (min-width: 1024px) {
+  .report-dark {
+    zoom: 1.15;
+  }
+}
+@media screen and (min-width: 1440px) {
+  .report-dark {
+    zoom: 1.22;
+  }
+}

@@ -109,9 +109,15 @@
   }
   function pct(num, denom) { return denom > 0 ? (num/denom)*100 : 0; }
   function safeNum(v) { return (v == null || isNaN(v) || !isFinite(v)) ? null : v; }
-  function argmaxAbs(rows, col) {
+  function argmaxAbs(rows, col, winStart, winEnd) {
+    // v41: optional window (winStart, winEnd) restricts search to a frame
+    // range. Default = full row range (backward compatible). Used by peak
+    // detection to prevent follow-through deceleration spikes from being
+    // mistaken for the true cocking-acceleration peak.
+    const s = (winStart != null) ? Math.max(0, winStart) : 0;
+    const e = (winEnd != null) ? Math.min(rows.length - 1, winEnd) : rows.length - 1;
     let idx = -1, val = -Infinity;
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = s; i <= e; i++) {
       const v = rows[i][col];
       if (v != null && !isNaN(v) && Math.abs(v) > val) { val = Math.abs(v); idx = i; }
     }
@@ -460,10 +466,41 @@
     const frontSide = handedness === 'left' ? 'right' : 'left';
     const armSide   = handedness === 'left' ? 'left'  : 'right';
 
-    // Self-computed peak frames + values via time-series argmax
-    const peakPelvis = argmaxAbs(rows, 'pelvis_rotational_velocity_with_respect_to_ground');
-    const peakTrunk  = argmaxAbs(rows, 'trunk_rotational_velocity_with_respect_to_ground');
-    const peakArm    = argmaxAbs(rows, `${armSide}_arm_rotational_velocity_with_respect_to_ground`);
+    // ─────────────────────────────────────────────────────────────────
+    // v41: BR/FC-anchored search windows for peak rotational velocity.
+    //
+    // Without windowing, argmaxAbs finds the global max over the entire
+    // trial — which can pick up follow-through deceleration spikes or
+    // pre-stride tracking noise instead of the true cocking-acceleration
+    // peak. Observed in 황정윤 case where Trial B's "arm peak" was detected
+    // ~80ms AFTER ball release (in follow-through), producing a nonsensical
+    // T→A lag of 238ms.
+    //
+    // Windows are anchored to the two most reliable event frames (FC, BR)
+    // and bracket each segment's physiologically expected peak window per
+    // proximal-to-distal sequencing literature:
+    //   Pelvis: typically peaks near FC (proximal segment fires earliest).
+    //           Window: FC-100ms ~ BR.
+    //   Trunk:  occurs between pelvis peak and BR.
+    //           Window: FC-50ms ~ BR+20ms.
+    //   Arm:    occurs just before BR (cocking-end / acceleration peak).
+    //           Window: FC ~ BR+30ms (excludes follow-through).
+    //
+    // Refs: Stodden et al. (2001), Aguinaldo & Chambers (2009), Fleisig
+    // et al. (1999) for typical pitching kinetic-chain peak timing.
+    // ─────────────────────────────────────────────────────────────────
+    const fpsMs = 1000 / fps;
+    const pelvisWinStart = fcRow - Math.round(100 / fpsMs);
+    const pelvisWinEnd   = brRow;
+    const trunkWinStart  = fcRow - Math.round(50 / fpsMs);
+    const trunkWinEnd    = brRow + Math.round(20 / fpsMs);
+    const armWinStart    = fcRow;
+    const armWinEnd      = brRow + Math.round(30 / fpsMs);
+
+    // Self-computed peak frames + values via windowed time-series argmax
+    const peakPelvis = argmaxAbs(rows, 'pelvis_rotational_velocity_with_respect_to_ground', pelvisWinStart, pelvisWinEnd);
+    const peakTrunk  = argmaxAbs(rows, 'trunk_rotational_velocity_with_respect_to_ground',  trunkWinStart,  trunkWinEnd);
+    const peakArm    = argmaxAbs(rows, `${armSide}_arm_rotational_velocity_with_respect_to_ground`, armWinStart, armWinEnd);
     if (!peakPelvis || !peakTrunk || !peakArm) return null;
 
     const ptLagMs = ((peakTrunk.idx - peakPelvis.idx) / fps) * 1000;

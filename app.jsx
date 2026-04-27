@@ -204,18 +204,30 @@ function extractPreviewMetrics(trial) {
   }
   if (maxXF === -Infinity) maxXF = null;
 
-  // Peak angular velocities (across full trial)
-  const argmaxAbsVal = (col) => {
+  // Peak angular velocities — windowed to FC/BR-anchored physiological ranges
+  // (v41: prevents follow-through deceleration spikes from being mistaken for
+  // the true cocking-acceleration peak; mirrors analysis.js logic so preview
+  // values used for outlier detection match the final analysis values).
+  const fpsMs = 1000 / fps;
+  const argmaxAbsVal = (col, winStart, winEnd) => {
+    const s = Math.max(0, winStart);
+    const e = Math.min(rows.length - 1, winEnd);
     let m = -Infinity;
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = s; i <= e; i++) {
       const v = rows[i][col];
       if (v != null && !isNaN(v) && Math.abs(v) > m) m = Math.abs(v);
     }
     return m === -Infinity ? null : m;
   };
-  const peakPelvisVel = argmaxAbsVal('pelvis_rotational_velocity_with_respect_to_ground');
-  const peakTrunkVel  = argmaxAbsVal('trunk_rotational_velocity_with_respect_to_ground');
-  const peakArmVel    = argmaxAbsVal(`${armSide}_arm_rotational_velocity_with_respect_to_ground`);
+  const peakPelvisVel = argmaxAbsVal(
+    'pelvis_rotational_velocity_with_respect_to_ground',
+    fcRow - Math.round(100 / fpsMs), brRow);
+  const peakTrunkVel  = argmaxAbsVal(
+    'trunk_rotational_velocity_with_respect_to_ground',
+    fcRow - Math.round(50 / fpsMs), brRow + Math.round(20 / fpsMs));
+  const peakArmVel    = argmaxAbsVal(
+    `${armSide}_arm_rotational_velocity_with_respect_to_ground`,
+    fcRow, brRow + Math.round(30 / fpsMs));
 
   // ETI (Energy Transfer Index)
   const etiPT = (peakPelvisVel != null && peakPelvisVel > 0 && peakTrunkVel != null)

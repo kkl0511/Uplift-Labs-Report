@@ -98,7 +98,13 @@
     const { pelvisMs, trunkMs, armMs, g1, g2 } = sequence;
     const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
 
-    const tMin = -30, tMax = 150;
+    // Auto-scale x-axis so the arm peak always fits within the plot area.
+    // Default range -30~150ms covers most pitchers, but a high taLag can push
+    // armMs beyond 150 (e.g. 황정윤 case: armMs ≈ 169ms). Without this
+    // auto-scale, the orange arm curve & peak dot get clipped off-screen.
+    // Round up to next 30ms gridline so axis labels stay clean.
+    const tMin = -30;
+    const tMax = Math.max(150, Math.ceil((Math.max(armMs || 0, trunkMs || 0) + 30) / 30) * 30);
     const w = 800, h = 340;
     const padL = 24, padR = 24, padT = 30, padB = 90;
     const plotW = w - padL - padR;
@@ -161,8 +167,12 @@
           {/* ideal Δt zones */}
           <rect x={toX(25)} y={padT} width={toX(70) - toX(25)} height={plotH} fill="rgba(74,222,128,0.07)"/>
 
-          {/* grid lines */}
-          {[-30, 0, 30, 60, 90, 120, 150].map(t => (
+          {/* grid lines — dynamically generated to match auto-scaled tMax */}
+          {(() => {
+            const lines = [];
+            for (let t = -30; t <= tMax; t += 30) lines.push(t);
+            return lines;
+          })().map(t => (
             <line key={t} x1={toX(t)} x2={toX(t)} y1={padT} y2={padT + plotH}
                   stroke="#1e293b" strokeWidth="1" strokeDasharray="2 4"/>
           ))}
@@ -832,6 +842,293 @@
   }
 
   // ============================================================
+  // Precision Energy Diagram — 5-paper precision metrics on mannequin
+  // (Howenstein elbow load · Wasserberger cocking power · Aguinaldo
+  //  trunk→arm amplification · de Swart pivot/stride leg asymmetry)
+  // ============================================================
+  function PrecisionEnergyDiagram({ precision }) {
+    if (!precision) return null;
+    const {
+      elbowEff,            // Howenstein N·m/(m/s) — lower better
+      cockPowerWPerKg,     // Wasserberger W/kg — higher better
+      transferTA_KE,       // Aguinaldo T→A KE ratio — higher better
+      legAsymmetry,        // de Swart pivot/stride ratio — 1.0~2.5 normal
+      peakPivotHipVel,     // de Swart pivot leg ω
+      peakStrideHipVel     // de Swart stride leg ω
+    } = precision;
+
+    const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
+
+    // Right-handed pose keypoints — LAYBACK / MER (Maximum External Rotation):
+    // upper arm abducted ~90° (elbow elevated to near shoulder height),
+    // forearm rotated externally so wrist lays back behind body line near
+    // elbow height, ball just past wrist. This dynamic pose better shows
+    // the kinetic chain at the late-cocking / acceleration transition,
+    // and gives a clear path for visualizing energy flow shoulder→elbow
+    // →wrist→ball along the throwing arm.
+    const K = {
+      head:     [400, 95],
+      neck:     [402, 138],
+      rShoulder:[450, 165],
+      rElbow:   [585, 135],   // elevated, abducted (90° look)
+      rWrist:   [470, 148],   // laid back behind shoulder line, near elbow height
+      ball:     [453, 158],   // at hand position, slightly below wrist
+      lShoulder:[365, 158],
+      lElbow:   [305, 175],
+      lWrist:   [355, 218],
+      pelvisR:  [430, 280],
+      pelvisL:  [375, 280],
+      pelvisC:  [402, 280],
+      rKnee:    [482, 358],   // pivot leg (back, R-handed)
+      rAnkle:   [550, 412],
+      lKnee:    [305, 384],   // stride leg (front, R-handed)
+      lAnkle:   [265, 470]
+    };
+
+    // Tone selectors based on literature thresholds
+    const toneLowerBetter = (val, [eliteT, normalT, midT]) =>
+      val == null ? 'none' : val < eliteT ? 'elite' : val < normalT ? 'normal' : val < midT ? 'mid' : 'bad';
+    const toneHigherBetter = (val, [eliteT, normalT, midT]) =>
+      val == null ? 'none' : val >= eliteT ? 'elite' : val >= normalT ? 'normal' : val >= midT ? 'mid' : 'bad';
+
+    const TONES = {
+      elite:  { color: '#10b981', text: '엘리트' },
+      normal: { color: '#94a3b8', text: '정상' },
+      mid:    { color: '#f59e0b', text: '주의' },
+      bad:    { color: '#ef4444', text: '부족' },
+      none:   { color: '#475569', text: '미측정' }
+    };
+
+    // Apply thresholds (mirrors report.jsx card logic)
+    const elbowTone    = toneLowerBetter(elbowEff,        [2.5, 3.5, 4.0]);
+    const shoulderTone = toneHigherBetter(cockPowerWPerKg, [30, 22, 15]);
+    const trunkTone    = toneHigherBetter(transferTA_KE,   [2.5, 1.7, 1.0]);
+    const asymTone     = legAsymmetry == null ? 'none'
+                       : (legAsymmetry >= 1.0 && legAsymmetry <= 2.5) ? 'normal'
+                       : 'mid';
+
+    return (
+      <div className="energy-silhouette">
+        <svg viewBox="0 0 800 520" className="silhouette-svg" role="img" aria-label="에너지 플로우 정밀 지표 마네킹">
+          <defs>
+            <marker id={`pe-arrow-${uid}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 Z" fill="currentColor"/>
+            </marker>
+            {/* v41-2: Energy flow with 3 per-segment gradients so colors
+                progress correctly along the Z-shaped layback arm path.
+                A single gradient from shoulder to ball doesn't work because
+                those points are only ~7px apart in straight-line distance
+                while the actual path length is ~270px. Per-segment gradients:
+                  Segment 1 (shoulder→elbow): cyan → green   (energy entering arm)
+                  Segment 2 (elbow→wrist):    green → amber  (transferred to forearm)
+                  Segment 3 (wrist→ball):     amber → red    (release peak) */}
+            <linearGradient id={`pe-armSeg1-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.rShoulder[0]} y1={K.rShoulder[1]} x2={K.rElbow[0]} y2={K.rElbow[1]}>
+              <stop offset="0%"   stopColor="#22d3ee"/>
+              <stop offset="100%" stopColor="#10b981"/>
+            </linearGradient>
+            <linearGradient id={`pe-armSeg2-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.rElbow[0]} y1={K.rElbow[1]} x2={K.rWrist[0]} y2={K.rWrist[1]}>
+              <stop offset="0%"   stopColor="#10b981"/>
+              <stop offset="100%" stopColor="#f59e0b"/>
+            </linearGradient>
+            <linearGradient id={`pe-armSeg3-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.rWrist[0]} y1={K.rWrist[1]} x2={K.ball[0]} y2={K.ball[1]}>
+              <stop offset="0%"   stopColor="#f59e0b"/>
+              <stop offset="100%" stopColor="#ef4444"/>
+            </linearGradient>
+            {/* Hidden path used for animateMotion of flowing particles */}
+            <path id={`pe-armPath-${uid}`}
+                  d={`M ${K.rShoulder[0]} ${K.rShoulder[1]} L ${K.rElbow[0]} ${K.rElbow[1]} L ${K.rWrist[0]} ${K.rWrist[1]} L ${K.ball[0]} ${K.ball[1]}`}/>
+            <filter id={`pe-glow-${uid}`} x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="2.5" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+
+          {/* Ground line */}
+          <line x1="40" y1="478" x2="760" y2="478" stroke="#2a3a5a" strokeWidth="1.5" strokeDasharray="3 6"/>
+
+          {/* === Schematic body silhouette (muted, lets indicators stand out) === */}
+          <g stroke="#475569" strokeLinecap="round" fill="none" opacity="0.85">
+            {/* Throwing arm in LAYBACK: shoulder→elbow (upper arm) →wrist (forearm laid back) */}
+            <line x1={K.rShoulder[0]} y1={K.rShoulder[1]} x2={K.rElbow[0]} y2={K.rElbow[1]} strokeWidth="11"/>
+            <line x1={K.rElbow[0]} y1={K.rElbow[1]} x2={K.rWrist[0]} y2={K.rWrist[1]} strokeWidth="9"/>
+            <line x1={K.rWrist[0]} y1={K.rWrist[1]} x2={K.ball[0]} y2={K.ball[1]} strokeWidth="7"/>
+            {/* Glove arm (left) */}
+            <line x1={K.lShoulder[0]} y1={K.lShoulder[1]} x2={K.lElbow[0]} y2={K.lElbow[1]} strokeWidth="9"/>
+            <line x1={K.lElbow[0]} y1={K.lElbow[1]} x2={K.lWrist[0]} y2={K.lWrist[1]} strokeWidth="7"/>
+            {/* Pivot leg (right, back) */}
+            <line x1={K.pelvisR[0]} y1={K.pelvisR[1]} x2={K.rKnee[0]} y2={K.rKnee[1]} strokeWidth="13"/>
+            <line x1={K.rKnee[0]} y1={K.rKnee[1]} x2={K.rAnkle[0]} y2={K.rAnkle[1]} strokeWidth="11"/>
+            {/* Stride leg (left, front) */}
+            <line x1={K.pelvisL[0]} y1={K.pelvisL[1]} x2={K.lKnee[0]} y2={K.lKnee[1]} strokeWidth="13"/>
+            <line x1={K.lKnee[0]} y1={K.lKnee[1]} x2={K.lAnkle[0]} y2={K.lAnkle[1]} strokeWidth="11"/>
+            {/* Shoulder line */}
+            <line x1={K.lShoulder[0]} y1={K.lShoulder[1]} x2={K.rShoulder[0]} y2={K.rShoulder[1]} strokeWidth="22"/>
+            {/* Spine */}
+            <line x1={(K.lShoulder[0]+K.rShoulder[0])/2} y1={(K.lShoulder[1]+K.rShoulder[1])/2 + 6}
+                  x2={K.pelvisC[0]} y2={K.pelvisC[1] - 8} strokeWidth="36"/>
+            {/* Pelvis line */}
+            <line x1={K.pelvisL[0]} y1={K.pelvisL[1]} x2={K.pelvisR[0]} y2={K.pelvisR[1]} strokeWidth="22"/>
+            {/* Neck */}
+            <line x1={K.neck[0]} y1={K.neck[1] - 4} x2={K.neck[0]} y2={K.neck[1] + 8} strokeWidth="9"/>
+          </g>
+          {/* Head */}
+          <circle cx={K.head[0]} cy={K.head[1]} r="22" fill="#1e293b" stroke="#475569" strokeWidth="1.5"/>
+          {/* Joint dots */}
+          {[K.lShoulder, K.lElbow, K.lWrist, K.rAnkle, K.lAnkle].map((p, i) => (
+            <circle key={i} cx={p[0]} cy={p[1]} r="4" fill="#334155" stroke="#475569" strokeWidth="1"/>
+          ))}
+
+          {/* === ⚡ ENERGY FLOW along throwing arm (shoulder→elbow→wrist→ball) === */}
+          {/* 3 segments each with its own gradient → clear color progression
+              along the Z-shaped layback arm path (cyan→green→amber→red).
+              Animated dashed stroke creates a flowing-wave effect. */}
+          <line x1={K.rShoulder[0]} y1={K.rShoulder[1]} x2={K.rElbow[0]} y2={K.rElbow[1]}
+                stroke={`url(#pe-armSeg1-${uid})`} strokeWidth="6.5"
+                strokeLinecap="round" opacity="0.9"
+                strokeDasharray="20 12" filter={`url(#pe-glow-${uid})`}>
+            <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
+          </line>
+          <line x1={K.rElbow[0]} y1={K.rElbow[1]} x2={K.rWrist[0]} y2={K.rWrist[1]}
+                stroke={`url(#pe-armSeg2-${uid})`} strokeWidth="6.5"
+                strokeLinecap="round" opacity="0.9"
+                strokeDasharray="20 12" filter={`url(#pe-glow-${uid})`}>
+            <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
+          </line>
+          <line x1={K.rWrist[0]} y1={K.rWrist[1]} x2={K.ball[0]} y2={K.ball[1]}
+                stroke={`url(#pe-armSeg3-${uid})`} strokeWidth="6.5"
+                strokeLinecap="round" opacity="0.9"
+                strokeDasharray="20 12" filter={`url(#pe-glow-${uid})`}>
+            <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
+          </line>
+          {/* Flowing particles along the arm */}
+          {[0, 0.5, 1.0].map(i => (
+            <circle key={`p-${i}`} r="3.5" fill="#ffffff" opacity="0">
+              <animateMotion dur="1.5s" repeatCount="indefinite" begin={`${-i * 0.5}s`}>
+                <mpath href={`#pe-armPath-${uid}`}/>
+              </animateMotion>
+              <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="1.5s" repeatCount="indefinite" begin={`${-i * 0.5}s`}/>
+            </circle>
+          ))}
+          {/* Ball at release point */}
+          <circle cx={K.ball[0]} cy={K.ball[1]} r="9" fill="#f8fafc" stroke="#1e293b" strokeWidth="1.2"/>
+          <path d={`M ${K.ball[0] - 6} ${K.ball[1] - 3} Q ${K.ball[0]} ${K.ball[1] - 8} ${K.ball[0] + 6} ${K.ball[1] - 3}`} stroke="#ef4444" strokeWidth="1.2" fill="none"/>
+          <path d={`M ${K.ball[0] - 6} ${K.ball[1] + 3} Q ${K.ball[0]} ${K.ball[1] + 8} ${K.ball[0] + 6} ${K.ball[1] + 3}`} stroke="#ef4444" strokeWidth="1.2" fill="none"/>
+
+          {/* === ④ de Swart leg asymmetry — DRAW FIRST so other indicators overlay cleanly === */}
+          {legAsymmetry != null && (() => {
+            const pivotR  = Math.min(28, 10 + (peakPivotHipVel  || 0) / 35);
+            const strideR = Math.min(28, 10 + (peakStrideHipVel || 0) / 35);
+            return (
+              <g>
+                {/* Pivot leg (blue) */}
+                <circle cx={K.rKnee[0]} cy={K.rKnee[1]} r={pivotR + 4} fill="none" stroke="#3b82f6" strokeWidth="2.5" opacity="0.85"/>
+                <circle cx={K.rKnee[0]} cy={K.rKnee[1]} r={pivotR} fill="#3b82f6" opacity="0.4"/>
+                {/* Stride leg (purple) */}
+                <circle cx={K.lKnee[0]} cy={K.lKnee[1]} r={strideR + 4} fill="none" stroke="#a855f7" strokeWidth="2.5" opacity="0.85"/>
+                <circle cx={K.lKnee[0]} cy={K.lKnee[1]} r={strideR} fill="#a855f7" opacity="0.4"/>
+              </g>
+            );
+          })()}
+
+          {/* === ③ Aguinaldo trunk → arm amplification arrow === */}
+          {transferTA_KE != null && (() => {
+            const arrowWidth = Math.min(16, 4 + transferTA_KE * 3);
+            const startX = K.pelvisC[0] + 30, startY = K.pelvisC[1] - 16;
+            const endX   = K.rShoulder[0] - 14, endY = K.rShoulder[1] + 14;
+            return (
+              <g style={{ color: TONES[trunkTone].color }}>
+                <line x1={startX} y1={startY} x2={endX} y2={endY}
+                      stroke="currentColor" strokeWidth={arrowWidth} strokeLinecap="round" opacity="0.7"
+                      markerEnd={`url(#pe-arrow-${uid})`}/>
+                <line x1={startX} y1={startY} x2={endX} y2={endY}
+                      stroke="#ffffff" strokeWidth="1.5" strokeOpacity="0.45" strokeLinecap="round"/>
+              </g>
+            );
+          })()}
+
+          {/* === ② Wasserberger cocking-phase shoulder power (pulse ring) === */}
+          {cockPowerWPerKg != null && (
+            <g style={{ color: TONES[shoulderTone].color }}>
+              <circle cx={K.rShoulder[0]} cy={K.rShoulder[1]} r="36" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.55">
+                <animate attributeName="r" values="28;48;28" dur="1.6s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.7;0;0.7" dur="1.6s" repeatCount="indefinite"/>
+              </circle>
+              <circle cx={K.rShoulder[0]} cy={K.rShoulder[1]} r="28" fill="none" stroke="currentColor" strokeWidth="3.5" opacity="0.9"/>
+              <circle cx={K.rShoulder[0]} cy={K.rShoulder[1]} r="11" fill="currentColor" opacity="0.95"/>
+              <circle cx={K.rShoulder[0]} cy={K.rShoulder[1]} r="11" fill="none" stroke="#ffffff" strokeWidth="1.2" opacity="0.85"/>
+            </g>
+          )}
+
+          {/* === ① Howenstein elbow load (stoplight + pulse) === */}
+          {elbowEff != null && (
+            <g style={{ color: TONES[elbowTone].color }}>
+              <circle cx={K.rElbow[0]} cy={K.rElbow[1]} r="30" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.6">
+                <animate attributeName="r" values="22;36;22" dur="1.8s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.85;0.15;0.85" dur="1.8s" repeatCount="indefinite"/>
+              </circle>
+              <circle cx={K.rElbow[0]} cy={K.rElbow[1]} r="13" fill="currentColor" opacity="0.95"/>
+              <circle cx={K.rElbow[0]} cy={K.rElbow[1]} r="13" fill="none" stroke="#ffffff" strokeWidth="1.5" opacity="0.9"/>
+            </g>
+          )}
+
+          {/* === ANNOTATIONS / LABEL CARDS — 고교 선수 친화적 표현 === */}
+          {/* ① Howenstein — 팔꿈치 부담 (top right) */}
+          {elbowEff != null && (
+            <g>
+              <line x1={K.rElbow[0] + 14} y1={K.rElbow[1] - 14} x2="612" y2="118" stroke={TONES[elbowTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
+              <rect x="588" y="84" width="184" height="62" rx="6" fill="#0b1220" stroke={TONES[elbowTone].color} strokeOpacity="0.7"/>
+              <text x="680" y="100" fill={TONES[elbowTone].color} fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">① 팔꿈치 부담</text>
+              <text x="680" y="120" fill="#e2e8f0" fontSize="15" fontWeight="800" textAnchor="middle">{elbowEff.toFixed(2)} N·m/(m/s)</text>
+              <text x="680" y="138" fill={TONES[elbowTone].color} fontSize="10" textAnchor="middle">{TONES[elbowTone].text} · 낮을수록 좋음</text>
+            </g>
+          )}
+          {/* ② Wasserberger — 어깨 폭발력 (top left) */}
+          {cockPowerWPerKg != null && (
+            <g>
+              <line x1={K.rShoulder[0] - 22} y1={K.rShoulder[1] - 4} x2="226" y2="118" stroke={TONES[shoulderTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
+              <rect x="40" y="84" width="184" height="62" rx="6" fill="#0b1220" stroke={TONES[shoulderTone].color} strokeOpacity="0.7"/>
+              <text x="132" y="100" fill={TONES[shoulderTone].color} fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">② 어깨 폭발력</text>
+              <text x="132" y="120" fill="#e2e8f0" fontSize="15" fontWeight="800" textAnchor="middle">{cockPowerWPerKg.toFixed(1)} W/kg</text>
+              <text x="132" y="138" fill={TONES[shoulderTone].color} fontSize="10" textAnchor="middle">{TONES[shoulderTone].text} · 높을수록 좋음</text>
+            </g>
+          )}
+          {/* ③ Aguinaldo — 몸통→팔 힘 전달 (middle right) */}
+          {transferTA_KE != null && (
+            <g>
+              <line x1={K.pelvisC[0] + 60} y1={K.pelvisC[1] - 60} x2="612" y2="276" stroke={TONES[trunkTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
+              <rect x="588" y="244" width="184" height="62" rx="6" fill="#0b1220" stroke={TONES[trunkTone].color} strokeOpacity="0.7"/>
+              <text x="680" y="260" fill={TONES[trunkTone].color} fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">③ 몸통→팔 힘 전달</text>
+              <text x="680" y="280" fill="#e2e8f0" fontSize="15" fontWeight="800" textAnchor="middle">{transferTA_KE.toFixed(2)} 배</text>
+              <text x="680" y="298" fill={TONES[trunkTone].color} fontSize="10" textAnchor="middle">{TONES[trunkTone].text} · 클수록 좋음</text>
+            </g>
+          )}
+          {/* ④ de Swart — 두 다리 균형 (bottom left) */}
+          {legAsymmetry != null && (
+            <g>
+              <line x1={K.lKnee[0] - 22} y1={K.lKnee[1] + 14} x2="226" y2="408" stroke={TONES[asymTone].color} strokeWidth="1.2" strokeDasharray="2 3" opacity="0.7"/>
+              <rect x="40" y="380" width="220" height="78" rx="6" fill="#0b1220" stroke={TONES[asymTone].color} strokeOpacity="0.7"/>
+              <text x="150" y="396" fill={TONES[asymTone].color} fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">④ 두 다리 균형</text>
+              <text x="150" y="416" fill="#e2e8f0" fontSize="15" fontWeight="800" textAnchor="middle">축발/디딤발 {legAsymmetry.toFixed(2)} 배</text>
+              <text x="150" y="434" fill="#3b82f6" fontSize="10" textAnchor="middle">● 축발(뒷다리) {(peakPivotHipVel || 0).toFixed(0)}°/s</text>
+              <text x="150" y="448" fill="#a855f7" fontSize="10" textAnchor="middle">● 디딤발(앞다리) {(peakStrideHipVel || 0).toFixed(0)}°/s</text>
+            </g>
+          )}
+        </svg>
+        <div className="silhouette-legend">
+          <div className="leg-item"><span className="dot" style={{ background: TONES[elbowTone].color }}/>① 팔꿈치 부담</div>
+          <div className="leg-item"><span className="dot" style={{ background: TONES[shoulderTone].color }}/>② 어깨 폭발력</div>
+          <div className="leg-item"><span className="dot" style={{ background: TONES[trunkTone].color }}/>③ 몸통→팔</div>
+          <div className="leg-item"><span className="dot" style={{ background: '#3b82f6' }}/>축발 · <span className="dot" style={{ background: '#a855f7', marginLeft: 6 }}/>디딤발</div>
+          <div className="leg-item note">팔의 색띠 = 에너지 흐름 (어깨→팔꿈치→손→공)</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
   // Layback Meter — Animated gauge
   // ============================================================
   function LaybackMeter({ deg }) {
@@ -898,5 +1195,5 @@
   }
 
   // Expose
-  window.BBLCharts = { RadarChart, SequenceChart, AngularChart, EnergyFlow, LaybackMeter };
+  window.BBLCharts = { RadarChart, SequenceChart, AngularChart, EnergyFlow, PrecisionEnergyDiagram, LaybackMeter };
 })();
