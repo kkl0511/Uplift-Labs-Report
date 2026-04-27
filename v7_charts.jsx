@@ -266,24 +266,24 @@
     const bandClr   = (b) => b === 'high' ? '#4ade80' : b === 'mid' ? '#c8c8d8' : '#f87171';
 
     const K = {
-      head:     [470, 100],
-      neck:     [478, 138],
-      rShoulder:[520, 162],
-      lShoulder:[438, 158],
-      rElbow:   [572, 108],
-      rWrist:   [612, 72],
-      ball:     [634, 60],
-      lElbow:   [376, 176],
-      lWrist:   [424, 220],
-      pelvisR:  [506, 280],
-      pelvisL:  [446, 280],
-      pelvisC:  [476, 280],
-      rKnee:    [556, 358],
-      rAnkle:   [620, 412],
-      lKnee:    [370, 384],
-      lAnkle:   [332, 472],
-      lToe:     [290, 474],
-      rToe:     [658, 420]
+      head:     [470, 115],
+      neck:     [478, 153],
+      rShoulder:[520, 177],   // throwing-side shoulder
+      lShoulder:[438, 173],   // glove-side shoulder
+      rElbow:   [555, 110],   // up at head height (late-cocking pose)
+      rWrist:   [535, 50],    // forearm vertical, laid back
+      ball:     [510, 30],    // above head, slightly back
+      lElbow:   [410, 215],   // glove arm bent, elbow tucked
+      lWrist:   [455, 195],   // glove hand UP near chest level
+      pelvisR:  [506, 295],
+      pelvisL:  [446, 295],
+      pelvisC:  [476, 295],
+      rKnee:    [556, 373],
+      rAnkle:   [620, 427],
+      lKnee:    [370, 399],
+      lAnkle:   [310, 487],   // stride foot landed forward (extended)
+      lToe:     [268, 489],
+      rToe:     [658, 435]
     };
 
     const arcs = [
@@ -565,6 +565,48 @@
               </g>
             );
           })}
+          {/* === Joint markers (key kinematic points) === */}
+          <g style={{ pointerEvents: 'none' }}>
+            {/* Throwing arm joints (amber accent) */}
+            {[
+              { p: K.rShoulder, c: '#fbbf24', label: 'R-Sh' },
+              { p: K.rElbow,    c: '#fbbf24', label: 'R-El' },
+              { p: K.rWrist,    c: '#fbbf24', label: 'R-Wr' }
+            ].map((j, i) => (
+              <g key={`tj-${i}`}>
+                <circle cx={j.p[0]} cy={j.p[1]} r="6.5" fill="#0b1220" stroke="#ffffff" strokeWidth="2" opacity="0.95"/>
+                <circle cx={j.p[0]} cy={j.p[1]} r="3.5" fill={j.c}/>
+              </g>
+            ))}
+            {/* Glove arm joints (cyan) */}
+            {[
+              { p: K.lShoulder, c: '#22d3ee' },
+              { p: K.lElbow,    c: '#22d3ee' },
+              { p: K.lWrist,    c: '#22d3ee' }
+            ].map((j, i) => (
+              <g key={`gj-${i}`}>
+                <circle cx={j.p[0]} cy={j.p[1]} r="6" fill="#0b1220" stroke="#ffffff" strokeWidth="1.6" opacity="0.9"/>
+                <circle cx={j.p[0]} cy={j.p[1]} r="3" fill={j.c}/>
+              </g>
+            ))}
+            {/* Pelvis center (purple) */}
+            <g>
+              <circle cx={K.pelvisC[0]} cy={K.pelvisC[1]} r="6.5" fill="#0b1220" stroke="#ffffff" strokeWidth="1.8" opacity="0.95"/>
+              <circle cx={K.pelvisC[0]} cy={K.pelvisC[1]} r="3.5" fill="#a78bfa"/>
+            </g>
+            {/* Lower body joints (cyan) */}
+            {[
+              { p: K.rKnee },
+              { p: K.rAnkle },
+              { p: K.lKnee },
+              { p: K.lAnkle }
+            ].map((j, i) => (
+              <g key={`lj-${i}`}>
+                <circle cx={j.p[0]} cy={j.p[1]} r="6" fill="#0b1220" stroke="#ffffff" strokeWidth="1.6" opacity="0.9"/>
+                <circle cx={j.p[0]} cy={j.p[1]} r="3" fill="#22d3ee"/>
+              </g>
+            ))}
+          </g>
         </svg>
 
         <div className="silhouette-legend">
@@ -595,24 +637,24 @@
     const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
 
     const K = {
-      head:     [470, 100],
-      neck:     [478, 138],
-      rShoulder:[520, 162],
-      lShoulder:[438, 158],
-      rElbow:   [572, 108],
-      rWrist:   [612, 72],
-      ball:     [634, 60],
-      lElbow:   [376, 176],
-      lWrist:   [424, 220],
-      pelvisR:  [506, 280],
-      pelvisL:  [446, 280],
-      pelvisC:  [476, 280],
-      rKnee:    [556, 358],
-      rAnkle:   [620, 412],
-      lKnee:    [370, 384],
-      lAnkle:   [332, 472],
-      lToe:     [290, 474],
-      rToe:     [658, 420]
+      head:     [470, 115],
+      neck:     [478, 153],
+      rShoulder:[520, 177],   // throwing-side shoulder
+      lShoulder:[438, 173],   // glove-side shoulder
+      rElbow:   [555, 110],   // up at head height (late-cocking pose)
+      rWrist:   [535, 50],    // forearm vertical, laid back
+      ball:     [510, 30],    // above head, slightly back
+      lElbow:   [410, 215],   // glove arm bent, elbow tucked
+      lWrist:   [455, 195],   // glove hand UP near chest level
+      pelvisR:  [506, 295],
+      pelvisL:  [446, 295],
+      pelvisC:  [476, 295],
+      rKnee:    [556, 373],
+      rAnkle:   [620, 427],
+      lKnee:    [370, 399],
+      lAnkle:   [310, 487],   // stride foot landed forward (extended)
+      lToe:     [268, 489],
+      rToe:     [658, 435]
     };
 
     const energyPath = `
@@ -829,6 +871,28 @@
               {taLeak ? `⚠ ${taC.label} (누수 ${leakPct}%)` : taC.label}
             </text>
           </g>
+
+          {/* === Joint markers (key kinematic points) === */}
+          <g style={{ pointerEvents: 'none' }}>
+            {[
+              { p: K.rShoulder, c: '#fbbf24', big: true },
+              { p: K.rElbow,    c: '#fbbf24', big: true },
+              { p: K.rWrist,    c: '#fbbf24', big: true },
+              { p: K.lShoulder, c: '#22d3ee' },
+              { p: K.lElbow,    c: '#22d3ee' },
+              { p: K.lWrist,    c: '#22d3ee' },
+              { p: K.pelvisC,   c: '#a78bfa', big: true },
+              { p: K.rKnee,     c: '#22d3ee' },
+              { p: K.rAnkle,    c: '#22d3ee' },
+              { p: K.lKnee,     c: '#22d3ee' },
+              { p: K.lAnkle,    c: '#22d3ee' }
+            ].map((j, i) => (
+              <g key={`jm-${i}`}>
+                <circle cx={j.p[0]} cy={j.p[1]} r={j.big ? 6.5 : 6} fill="#0b1220" stroke="#ffffff" strokeWidth={j.big ? 2 : 1.6} opacity={j.big ? 0.95 : 0.9}/>
+                <circle cx={j.p[0]} cy={j.p[1]} r={j.big ? 3.5 : 3} fill={j.c}/>
+              </g>
+            ))}
+          </g>
         </svg>
 
         <div className="silhouette-legend">
@@ -904,19 +968,19 @@
       neck:     [478, 153],
       rShoulder:[520, 177],
       lShoulder:[438, 173],
-      rElbow:   [555, 110],   // up at head height (Cornell pose)
+      rElbow:   [555, 110],   // up at head height (late-cocking pose)
       rWrist:   [535, 50],    // forearm vertical, laid back
       ball:     [510, 30],    // above head, slightly back
-      lElbow:   [376, 191],
-      lWrist:   [424, 235],
+      lElbow:   [410, 215],   // glove arm bent, elbow tucked
+      lWrist:   [455, 195],   // glove hand UP near chest level
       pelvisR:  [506, 295],
       pelvisL:  [446, 295],
       pelvisC:  [476, 295],
       rKnee:    [556, 373],
       rAnkle:   [620, 427],
       lKnee:    [370, 399],
-      lAnkle:   [332, 487],
-      lToe:     [290, 489],
+      lAnkle:   [310, 487],   // stride foot landed forward (extended)
+      lToe:     [268, 489],
       rToe:     [658, 435]
     };
 
@@ -1242,6 +1306,28 @@
             <text x="680" y="456" fill="#e2e8f0" fontSize="13" fontWeight="700" textAnchor="middle">에너지 시작점</text>
             <text x="680" y="472" fill="#22d3ee" fontSize="10" textAnchor="middle">지면 반력 → 골반 회전</text>
           </g>
+
+          {/* === Joint markers (key kinematic points) === */}
+          <g style={{ pointerEvents: 'none' }}>
+            {[
+              { p: K.rShoulder, c: '#fbbf24', big: true },
+              { p: K.rElbow,    c: '#fbbf24', big: true },
+              { p: K.rWrist,    c: '#fbbf24', big: true },
+              { p: K.lShoulder, c: '#22d3ee' },
+              { p: K.lElbow,    c: '#22d3ee' },
+              { p: K.lWrist,    c: '#22d3ee' },
+              { p: K.pelvisC,   c: '#a78bfa', big: true },
+              { p: K.rKnee,     c: '#22d3ee' },
+              { p: K.rAnkle,    c: '#22d3ee' },
+              { p: K.lKnee,     c: '#22d3ee' },
+              { p: K.lAnkle,    c: '#22d3ee' }
+            ].map((j, i) => (
+              <g key={`jm-${i}`}>
+                <circle cx={j.p[0]} cy={j.p[1]} r={j.big ? 6.5 : 6} fill="#0b1220" stroke="#ffffff" strokeWidth={j.big ? 2 : 1.6} opacity={j.big ? 0.95 : 0.9}/>
+                <circle cx={j.p[0]} cy={j.p[1]} r={j.big ? 3.5 : 3} fill={j.c}/>
+              </g>
+            ))}
+          </g>
         </svg>
         <div className="silhouette-legend">
           <div className="leg-item"><span className="dot" style={{ background: '#22d3ee' }}/>에너지 시작</div>
@@ -1250,6 +1336,11 @@
           <div className="leg-item"><span className="dot" style={{ background: TONES[elbowTone].color }}/>① 팔꿈치 부담</div>
           <div className="leg-item"><span className="dot" style={{ background: TONES[shoulderTone].color }}/>② 어깨 폭발력</div>
           <div className="leg-item"><span className="dot" style={{ background: '#3b82f6' }}/>축발 · <span className="dot" style={{ background: '#a855f7', marginLeft: 6 }}/>디딤발</div>
+          <div className="leg-item">
+            <span style={{ display:'inline-block', width:9, height:9, borderRadius:'50%', background:'#fbbf24', border:'1.5px solid #fff', marginRight:4 }}/>던지는 팔 관절
+            <span style={{ display:'inline-block', width:9, height:9, borderRadius:'50%', background:'#22d3ee', border:'1.5px solid #fff', marginLeft:8, marginRight:4 }}/>그 외 관절
+            <span style={{ display:'inline-block', width:9, height:9, borderRadius:'50%', background:'#a78bfa', border:'1.5px solid #fff', marginLeft:8, marginRight:4 }}/>골반
+          </div>
           <div className="leg-item note">색띠 = 에너지 흐름 · 빨강 점멸 = 누수 · 맥동 링 = 정밀 지표</div>
         </div>
       </div>
