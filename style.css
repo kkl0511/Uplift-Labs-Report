@@ -348,3 +348,163 @@ html, body {
     zoom: 1.22;
   }
 }
+
+
+/* =============================================================
+   PART BANNERS & SECTION BORDERS (v42 — 구속/제구/종합 재구성)
+   리포트를 PART A (측정), B (구속), C (제구), D (종합)로 시각 구분.
+   각 섹션 좌측에 얇은 컬러 보더 + PART 시작 시 배너 표시.
+   ============================================================= */
+.part-banner {
+  margin: 24px 0 12px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-left-width: 6px;
+  border-left-style: solid;
+}
+.part-banner .part-letter {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1;
+}
+.part-banner .part-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.part-banner .part-subtitle {
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* PART A — 측정 정보 (회색) */
+.part-A {
+  background: linear-gradient(90deg, #1a2236 0%, #0c1220 100%);
+  border-left-color: #64748b;
+  color: #cbd5e1;
+}
+.part-A .part-letter { color: #94a3b8; }
+.part-A .part-title  { color: #e2e8f0; }
+
+/* PART B — 구속 (호박색) */
+.part-B {
+  background: linear-gradient(90deg, #2c1d08 0%, #0c1220 100%);
+  border-left-color: #f59e0b;
+  color: #fbbf24;
+}
+.part-B .part-letter { color: #fbbf24; }
+.part-B .part-title  { color: #fcd34d; }
+
+/* PART C — 부상 위험성 (빨강) */
+.part-C {
+  background: linear-gradient(90deg, #2a1010 0%, #0c1220 100%);
+  border-left-color: #ef4444;
+  color: #fca5a5;
+}
+.part-C .part-letter { color: #fca5a5; }
+.part-C .part-title  { color: #fecaca; }
+
+/* PART D — 제구 (분홍/마젠타) */
+.part-D {
+  background: linear-gradient(90deg, #2a1828 0%, #0c1220 100%);
+  border-left-color: #ec4899;
+  color: #f472b6;
+}
+.part-D .part-letter { color: #f472b6; }
+.part-D .part-title  { color: #f9a8d4; }
+
+/* PART E — 종합 (청록) */
+.part-E {
+  background: linear-gradient(90deg, #082426 0%, #0c1220 100%);
+  border-left-color: #14b8a6;
+  color: #5eead4;
+}
+.part-E .part-letter { color: #5eead4; }
+.part-E .part-title  { color: #99f6e4; }
+
+/* 섹션 좌측 보더 (각 PART의 색상 톤) */
+.section-velocity { border-left: 3px solid rgba(245, 158, 11, 0.35); padding-left: 12px; margin-left: 4px; }
+.section-injury   { border-left: 3px solid rgba(239,  68,  68, 0.35); padding-left: 12px; margin-left: 4px; }
+.section-command  { border-left: 3px solid rgba(236,  72, 153, 0.35); padding-left: 12px; margin-left: 4px; }
+.section-summary  { border-left: 3px solid rgba(20, 184, 166, 0.35); padding-left: 12px; margin-left: 4px; }
+.section-baseline { border-left: 3px solid rgba(100, 116, 139, 0.30); padding-left: 12px; margin-left: 4px; }
+
+/* 관점 인트로 — 각 섹션 위에 짧은 설명 */
+.perspective-intro {
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding: 8px 12px;
+  margin: -2px 0 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid #1e293b;
+}
+.perspective-intro.velocity { color: #fbbf24; border-color: rgba(245, 158, 11, 0.25); }
+.perspective-intro.injury   { color: #fca5a5; border-color: rgba(239, 68, 68, 0.25); }
+.perspective-intro.command  { color: #f472b6; border-color: rgba(236, 72, 153, 0.25); }
+.perspective-intro.shared   { color: #94a3b8; }
+.perspective-intro b { color: #f1f5f9; font-weight: 700; }
+
+/* 점수 카드 (종합 섹션용) */
+.score-card {
+  border-radius: 10px;
+  padding: 14px 16px;
+  border: 1px solid;
+  background: linear-gradient(180deg, rgba(15,23,42,0.6) 0%, rgba(11,18,32,1) 100%);
+}
+.score-card.velocity { border-color: rgba(245, 158, 11, 0.4); }
+.score-card.command  { border-color: rgba(236, 72, 153, 0.4); }
+.score-card .score-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+  text-transform: uppercase; margin-bottom: 4px;
+}
+.score-card.velocity .score-label { color: #fbbf24; }
+.score-card.command  .score-label { color: #f472b6; }
+.score-card .score-grade {
+  font-size: 38px; font-weight: 900; line-height: 1; letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+.score-card .score-value {
+  font-size: 18px; font-weight: 700; color: #e2e8f0; margin-left: 6px;
+}
+.score-card .score-detail {
+  font-size: 11px; color: #94a3b8; margin-top: 6px; line-height: 1.5;
+}
+
+/* 우선순위 개선점 */
+.priority-fix {
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 4px solid;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.priority-fix.rank-1 { border-left-color: #ef4444; }
+.priority-fix.rank-2 { border-left-color: #f59e0b; }
+.priority-fix.rank-3 { border-left-color: #3b82f6; }
+.priority-fix .rank-label {
+  display: inline-block;
+  font-size: 10px; font-weight: 800;
+  padding: 2px 8px; border-radius: 4px;
+  margin-right: 8px; letter-spacing: 0.5px;
+}
+.priority-fix.rank-1 .rank-label { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.priority-fix.rank-2 .rank-label { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+.priority-fix.rank-3 .rank-label { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
+.priority-fix .fix-title {
+  font-size: 13px; font-weight: 700; color: #f1f5f9;
+}
+.priority-fix .fix-detail {
+  font-size: 11.5px; color: #cbd5e1; margin-top: 4px; line-height: 1.5;
+}
+.priority-fix .fix-action {
+  font-size: 11px; color: #94a3b8; margin-top: 5px;
+  padding-top: 5px; border-top: 1px dashed #1e293b;
+}
+.priority-fix .fix-action b { color: #e2e8f0; }

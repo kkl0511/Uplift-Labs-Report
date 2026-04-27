@@ -32,6 +32,250 @@
   };
 
   // ============================================================
+  // v42 — Score calculation helpers for summary section
+  // 0~100 score → A+/A/B+/B/C/D/F grade
+  // ============================================================
+  function scoreToGrade(score) {
+    if (score == null || isNaN(score)) return '—';
+    if (score >= 92) return 'A+';
+    if (score >= 85) return 'A';
+    if (score >= 78) return 'A-';
+    if (score >= 72) return 'B+';
+    if (score >= 65) return 'B';
+    if (score >= 58) return 'B-';
+    if (score >= 52) return 'C+';
+    if (score >= 45) return 'C';
+    if (score >= 38) return 'C-';
+    if (score >= 30) return 'D+';
+    if (score >= 22) return 'D';
+    return 'F';
+  }
+  // Velocity score: combines absolute velocity, energy efficiency,
+  // and rotational power (Pelvis/Trunk/Arm peak)
+  function calcVelocityScore({ summary, energy }) {
+    const parts = [];
+    // Velocity vs typical HS pitcher (35-45 m/s = 78-100 mph) — normalize to 0~100
+    if (summary.velocity?.mean != null) {
+      const v = summary.velocity.mean;
+      // Normalize: 30 m/s → 30, 35 m/s → 50, 40 m/s → 70, 45 m/s → 90
+      const normV = Math.max(0, Math.min(100, (v - 25) * 4));
+      parts.push({ w: 0.40, v: normV });
+    }
+    // Energy transfer efficiency (P→T and T→A)
+    if (energy?.etiPT != null) {
+      // ETI 1.0 → 30, 1.4 → 50, 1.7 → 75, 2.0+ → 95
+      const e = Math.max(0, Math.min(100, (energy.etiPT - 0.7) * 80));
+      parts.push({ w: 0.15, v: e });
+    }
+    if (energy?.etiTA != null) {
+      const e = Math.max(0, Math.min(100, (energy.etiTA - 0.8) * 75));
+      parts.push({ w: 0.15, v: e });
+    }
+    // Arm angular velocity (>4500°/s = elite, ~3500 = average)
+    if (summary.peakArmAngVel?.mean != null) {
+      const a = summary.peakArmAngVel.mean;
+      const normA = Math.max(0, Math.min(100, (a - 2500) / 25));
+      parts.push({ w: 0.20, v: normA });
+    }
+    // Trunk power
+    if (summary.peakTrunkAngVel?.mean != null) {
+      const t = summary.peakTrunkAngVel.mean;
+      const normT = Math.max(0, Math.min(100, (t - 700) / 7));
+      parts.push({ w: 0.10, v: normT });
+    }
+    if (parts.length === 0) return null;
+    const totalW = parts.reduce((s, p) => s + p.w, 0);
+    return parts.reduce((s, p) => s + p.v * p.w, 0) / totalW;
+  }
+  // Command score: based on release-consistency CV/SD across multiple metrics
+  function calcCommandScore({ summary, command, perTrialStats }) {
+    if (command?.score != null) {
+      // command.score is already 0~100
+      return command.score;
+    }
+    const parts = [];
+    // FC→BR timing consistency (CV%)
+    if (summary.fcBrMs?.cv != null) {
+      const cv = summary.fcBrMs.cv;
+      const norm = Math.max(0, Math.min(100, 100 - cv * 10));
+      parts.push({ w: 0.30, v: norm });
+    }
+    // Stride length consistency
+    if (summary.strideLength?.cv != null) {
+      const cv = summary.strideLength.cv;
+      const norm = Math.max(0, Math.min(100, 100 - cv * 12));
+      parts.push({ w: 0.20, v: norm });
+    }
+    // Max ER consistency
+    if (summary.maxER?.cv != null) {
+      const cv = summary.maxER.cv;
+      const norm = Math.max(0, Math.min(100, 100 - cv * 6));
+      parts.push({ w: 0.20, v: norm });
+    }
+    // Trunk forward tilt consistency (lower SD better)
+    if (summary.trunkForwardTilt?.sd != null) {
+      const sd = summary.trunkForwardTilt.sd;
+      const norm = Math.max(0, Math.min(100, 100 - sd * 12));
+      parts.push({ w: 0.15, v: norm });
+    }
+    // Arm slot consistency
+    if (summary.armSlotAngle?.sd != null) {
+      const sd = summary.armSlotAngle.sd;
+      const norm = Math.max(0, Math.min(100, 100 - sd * 15));
+      parts.push({ w: 0.15, v: norm });
+    }
+    if (parts.length === 0) return null;
+    const totalW = parts.reduce((s, p) => s + p.w, 0);
+    return parts.reduce((s, p) => s + p.v * p.w, 0) / totalW;
+  }
+  // Injury risk score: 0=safe, 100=critical
+  function calcInjuryScore({ summary, energy, faultRates }) {
+    const risks = [];
+    // 1. Howenstein elbow load efficiency
+    if (summary.elbowLoadEfficiency?.mean != null) {
+      const eff = summary.elbowLoadEfficiency.mean;
+      // <2.5 safe, 2.5-3.5 caution, 3.5-4 danger, >4 critical
+      const r = eff < 2.5 ? 10 : eff < 3.5 ? 30 : eff < 4 ? 60 : 90;
+      risks.push({ w: 0.25, v: r, name: 'elbow' });
+    }
+    // 2. MER over/under (safe range 165-180)
+    if (summary.maxER?.mean != null) {
+      const mer = summary.maxER.mean;
+      let r = 10;
+      if (mer < 155 || mer > 195) r = 80;
+      else if (mer < 160 || mer > 190) r = 50;
+      else if (mer < 165 || mer > 185) r = 25;
+      risks.push({ w: 0.18, v: r, name: 'mer' });
+    }
+    // 3. Cocking shoulder power — extreme high → stress
+    if (summary.cockingPhaseArmPowerWPerKg?.mean != null) {
+      const w = summary.cockingPhaseArmPowerWPerKg.mean;
+      // >50 W/kg = high stress, 30-50 normal, <30 low (no high stress but low power)
+      const r = w > 55 ? 70 : w > 45 ? 40 : w > 35 ? 20 : 15;
+      risks.push({ w: 0.15, v: r, name: 'shoulder' });
+    }
+    // 4. Trunk forward tilt — too forward = shoulder load
+    if (summary.trunkForwardTilt?.mean != null) {
+      const t = Math.abs(summary.trunkForwardTilt.mean);
+      const r = t > 45 ? 70 : t > 35 ? 40 : t > 25 ? 20 : 10;
+      risks.push({ w: 0.12, v: r, name: 'trunk' });
+    }
+    // 5. Energy leak — arm compensates → extra load
+    if (energy?.leakRate != null) {
+      const lr = energy.leakRate;
+      const r = lr > 30 ? 70 : lr > 20 ? 45 : lr > 12 ? 25 : 10;
+      risks.push({ w: 0.15, v: r, name: 'leak' });
+    }
+    // 6. Fault rates — DEC, Inv-W, etc.
+    if (faultRates) {
+      const totalFaults = Object.values(faultRates).reduce((s, v) => s + (v || 0), 0);
+      const avgFault = Object.keys(faultRates).length > 0 ? totalFaults / Object.keys(faultRates).length : 0;
+      const r = avgFault > 50 ? 70 : avgFault > 25 ? 40 : avgFault > 10 ? 20 : 10;
+      risks.push({ w: 0.10, v: r, name: 'faults' });
+    }
+    // 7. Front-foot block instability — knee flexion change at FC vs BR
+    if (summary.kneeFlexionAtFC?.mean != null && summary.kneeFlexionAtBR?.mean != null) {
+      const collapse = summary.kneeFlexionAtFC.mean - summary.kneeFlexionAtBR.mean;
+      // Stride knee should EXTEND (negative collapse = good). Positive = collapsing
+      const r = collapse > 15 ? 60 : collapse > 5 ? 35 : collapse > -5 ? 20 : 10;
+      risks.push({ w: 0.05, v: r, name: 'frontFoot' });
+    }
+    if (risks.length === 0) return { score: null, risks: [] };
+    const totalW = risks.reduce((s, p) => s + p.w, 0);
+    const score = risks.reduce((s, p) => s + p.v * p.w, 0) / totalW;
+    return { score, risks };
+  }
+  // Generate top-N priority improvements based on weakest areas
+  function generatePriorities({ velocityScore, commandScore, injury, summary, energy }) {
+    const candidates = [];
+    // Velocity-related
+    if (velocityScore != null && velocityScore < 65) {
+      if (energy?.leakRate > 20) {
+        candidates.push({
+          kind: 'velocity',
+          weight: 100 - velocityScore + (energy.leakRate - 20),
+          title: '에너지 누수 줄이기',
+          detail: `종합 누수율이 ${energy.leakRate.toFixed(1)}%로 높음. 골반→몸통 전이 효율을 우선 점검.`,
+          action: '메디신볼 회전 던지기, 몸통 분리(separation) 드릴, 골반-몸통 분리각도 강화'
+        });
+      }
+      if (summary.peakArmAngVel?.mean != null && summary.peakArmAngVel.mean < 3500) {
+        candidates.push({
+          kind: 'velocity',
+          weight: 100 - velocityScore + (3500 - summary.peakArmAngVel.mean) / 50,
+          title: '팔 회전 속도 향상',
+          detail: `팔 peak 각속도 ${summary.peakArmAngVel.mean.toFixed(0)}°/s (엘리트 4500+°/s)`,
+          action: '플라이오 볼 던지기 (200g, 100g), 어깨 외회전 강화, J-band 루틴'
+        });
+      }
+      if (summary.maxER?.mean != null && summary.maxER.mean < 165) {
+        candidates.push({
+          kind: 'velocity',
+          weight: 100 - velocityScore + (165 - summary.maxER.mean),
+          title: 'MER (어깨 외회전) 부족',
+          detail: `${summary.maxER.mean.toFixed(0)}° (엘리트 170-185°)`,
+          action: '슬리퍼 스트레치, 어깨 외회전 가동성 향상, sleeper stretch'
+        });
+      }
+    }
+    // Injury-related
+    if (injury?.score != null && injury.score >= 40) {
+      const elbowRisk = injury.risks.find(r => r.name === 'elbow');
+      if (elbowRisk && elbowRisk.v >= 60) {
+        candidates.push({
+          kind: 'injury',
+          weight: 150 + elbowRisk.v,
+          title: '팔꿈치 부담 감소 (긴급)',
+          detail: `팔꿈치 부하 효율 ${summary.elbowLoadEfficiency?.mean?.toFixed(2)} N·m/(m/s) — 합성 모멘트 과부하`,
+          action: '투구 수 제한 + 팔꿈치 안정화 운동(Wrist 회전), 즉시 코치/트레이너 상담'
+        });
+      }
+      const merRisk = injury.risks.find(r => r.name === 'mer');
+      if (merRisk && merRisk.v >= 50) {
+        candidates.push({
+          kind: 'injury',
+          weight: 130 + merRisk.v,
+          title: 'MER 범위 비정상',
+          detail: `${summary.maxER.mean.toFixed(0)}° (안전 165-185°)`,
+          action: '어깨 후방 캡슐 모빌리티 + posterior shoulder 강화'
+        });
+      }
+    }
+    // Command-related
+    if (commandScore != null && commandScore < 65) {
+      if (summary.fcBrMs?.cv > 8) {
+        candidates.push({
+          kind: 'command',
+          weight: 90 - commandScore + summary.fcBrMs.cv,
+          title: '릴리스 타이밍 일관성',
+          detail: `FC→릴리스 시간 CV ${summary.fcBrMs.cv.toFixed(1)}% (엘리트 <2%)`,
+          action: '메트로놈 투구 드릴, 동일 카운트로 릴리스 반복 훈련'
+        });
+      }
+      if (summary.strideLength?.cv > 5) {
+        candidates.push({
+          kind: 'command',
+          weight: 85 - commandScore + summary.strideLength.cv,
+          title: '디딤발 위치 일관성',
+          detail: `스트라이드 길이 CV ${summary.strideLength.cv.toFixed(1)}% (엘리트 <3%)`,
+          action: '바닥 마커 배치 후 스트라이드 정확성 훈련, 체인 드릴'
+        });
+      }
+      if (summary.armSlotAngle?.sd > 4) {
+        candidates.push({
+          kind: 'command',
+          weight: 80 - commandScore + summary.armSlotAngle.sd * 2,
+          title: '팔 슬롯 일관성',
+          detail: `Arm slot SD ±${summary.armSlotAngle.sd.toFixed(2)}° (엘리트 <2°)`,
+          action: '거울 보고 동일 슬롯 반복, T-드릴, 와인드업 일관성'
+        });
+      }
+    }
+    // Sort by weight (highest first), take top 3
+    return candidates.sort((a, b) => b.weight - a.weight).slice(0, 3);
+  }
+
+  // ============================================================
   // v7 chart adapters (analysis output → v7 chart input format)
   // ============================================================
   function toSequenceProps(analysis) {
@@ -508,9 +752,9 @@
   // ============================================================
   // Layout primitives
   // ============================================================
-  function Section({ title, subtitle, n, children }) {
+  function Section({ title, subtitle, n, children, className }) {
     return (
-      <section className="bbl-section">
+      <section className={`bbl-section ${className || ''}`}>
         <div className="bbl-section-head">
           <span className="bbl-section-num">{n != null ? String(n).padStart(2, '0') : ''}</span>
           <h2 className="bbl-section-title">{title}</h2>
@@ -518,6 +762,158 @@
         </div>
         <div className="bbl-section-body">{children}</div>
       </section>
+    );
+  }
+
+  // ============================================================
+  // v42 — PART Banner: visual divider for the 5-PART structure
+  // ============================================================
+  function PartBanner({ letter, title, subtitle }) {
+    return (
+      <div className={`part-banner part-${letter}`}>
+        <span className="part-letter">{letter}</span>
+        <div>
+          <div className="part-title">{title}</div>
+          {subtitle && <div className="part-subtitle">{subtitle}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
+  // v42 — Perspective Intro: short context note above each section
+  // ============================================================
+  function PerspectiveIntro({ kind, children }) {
+    return (
+      <div className={`perspective-intro ${kind || 'shared'}`}>
+        {children}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // v42 — Consistency Card: shows CV or SD with elite threshold
+  // ============================================================
+  function ConsistencyCard({ label, value, unit, threshold, lowerBetter = true, description }) {
+    if (value == null) return null;
+    let tone, statusText;
+    if (lowerBetter) {
+      if (threshold && value <= threshold.elite) { tone = 'stat-good'; statusText = '엘리트'; }
+      else if (threshold && value <= threshold.good) { tone = ''; statusText = '양호'; }
+      else if (threshold && value <= threshold.ok) { tone = 'stat-mid'; statusText = '주의'; }
+      else { tone = 'stat-bad'; statusText = '부족'; }
+    } else {
+      if (threshold && value >= threshold.elite) { tone = 'stat-good'; statusText = '엘리트'; }
+      else { tone = ''; statusText = '—'; }
+    }
+    return (
+      <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
+        <div className="stat-label">{label}</div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="text-[18px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
+            {typeof value === 'number' ? value.toFixed(2) : value}
+          </span>
+          <span className="text-[10.5px]" style={{ color: '#94a3b8' }}>{unit}</span>
+          <span className="text-[10px] ml-auto" style={{ color: tone === 'stat-good' ? '#10b981' : tone === 'stat-mid' ? '#f59e0b' : tone === 'stat-bad' ? '#ef4444' : '#94a3b8' }}>
+            {statusText}
+          </span>
+        </div>
+        {description && <div className="text-[10.5px] mt-1" style={{ color: '#94a3b8' }}>{description}</div>}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // v42 — Injury Risk Card: shows injury indicator with severity
+  // ============================================================
+  function InjuryCard({ icon, title, value, unit, status, description, threshold }) {
+    const statusColor = {
+      safe: '#10b981',
+      caution: '#f59e0b',
+      danger: '#ef4444',
+      critical: '#dc2626'
+    }[status] || '#94a3b8';
+    const statusLabel = {
+      safe: '안전',
+      caution: '주의',
+      danger: '위험',
+      critical: '심각'
+    }[status] || '—';
+    const tone = {
+      safe: 'stat-good',
+      caution: 'stat-mid',
+      danger: 'stat-bad',
+      critical: 'stat-bad'
+    }[status] || '';
+    return (
+      <div className={`stat-card ${tone}`} style={{ padding: '10px 12px' }}>
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: 16 }}>{icon}</span>
+          <div className="stat-label" style={{ flex: 1 }}>{title}</div>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+            background: `${statusColor}25`, color: statusColor }}>
+            {statusLabel}
+          </span>
+        </div>
+        {value != null && (
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-[18px] font-bold tabular-nums" style={{ color: '#f1f5f9' }}>
+              {typeof value === 'number' ? value.toFixed(2) : value}
+            </span>
+            {unit && <span className="text-[10.5px]" style={{ color: '#94a3b8' }}>{unit}</span>}
+          </div>
+        )}
+        {description && <div className="text-[10.5px] mt-1" style={{ color: '#cbd5e1' }}>{description}</div>}
+        {threshold && <div className="text-[10px] mt-1" style={{ color: '#94a3b8' }}>{threshold}</div>}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // v42 — Score Card: large grade display for summary section
+  // ============================================================
+  function ScoreCard({ kind, label, grade, value, valueUnit, detail }) {
+    const gradeColor = {
+      'A+': '#10b981', 'A': '#10b981', 'A-': '#10b981',
+      'B+': '#84cc16', 'B': '#84cc16', 'B-': '#84cc16',
+      'C+': '#f59e0b', 'C': '#f59e0b', 'C-': '#f59e0b',
+      'D+': '#ef4444', 'D': '#ef4444', 'D-': '#ef4444', 'F': '#dc2626'
+    }[grade] || '#94a3b8';
+    return (
+      <div className={`score-card ${kind}`}>
+        <div className="score-label">{label}</div>
+        <div className="flex items-baseline">
+          <span className="score-grade" style={{ color: gradeColor }}>{grade || '—'}</span>
+          {value != null && (
+            <span className="score-value">
+              {typeof value === 'number' ? value.toFixed(1) : value}
+              {valueUnit && <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 4 }}>{valueUnit}</span>}
+            </span>
+          )}
+        </div>
+        {detail && <div className="score-detail">{detail}</div>}
+      </div>
+    );
+  }
+
+  // ============================================================
+  // v42 — Priority Fix: ranked improvement item for summary
+  // ============================================================
+  function PriorityFix({ rank, kind, title, detail, action }) {
+    const kindLabel = {
+      velocity: '구속',
+      injury: '부상',
+      command: '제구',
+      mixed: '종합'
+    }[kind] || '';
+    return (
+      <div className={`priority-fix rank-${rank}`}>
+        <span className="rank-label">우선순위 {rank}</span>
+        {kindLabel && <span style={{ fontSize: 10, color: '#94a3b8', marginRight: 8 }}>· {kindLabel}</span>}
+        <span className="fix-title">{title}</span>
+        {detail && <div className="fix-detail">{detail}</div>}
+        {action && <div className="fix-action"><b>훈련 제안:</b> {action}</div>}
+      </div>
     );
   }
 
@@ -1970,17 +2366,22 @@
             </div>
           )}
 
-          <Section n={1} title="신체 & 구속">
+          <PartBanner letter="A" title="측정 정보" subtitle="이 분석의 출발점 — 선수 정보와 투구 영상"/>
+          <Section n={1} title="신체 & 구속" className="section-baseline">
             <BioVelocityPanel pitcher={pitcher} summary={summary} perTrial={perTrialStats}/>
           </Section>
 
           {videoUrl && (
-            <Section n={2} title="측정 영상" subtitle={armSlotType ? `arm slot: ${armSlotType}` : ''}>
+            <Section n={2} title="측정 영상" className="section-baseline" subtitle={armSlotType ? `arm slot: ${armSlotType}` : ''}>
               <VideoPlayer src={videoUrl}/>
             </Section>
           )}
 
-          <Section n={videoUrl ? 3 : 2} title="분절 시퀀싱" subtitle="P→T→A 타이밍">
+          <PartBanner letter="B" title="구속 — 파워와 메커닉스" subtitle="공의 빠르기를 결정하는 핵심 요인 — 타이밍, 회전 속도, 가동범위, 그리고 에너지 흐름"/>
+          <Section n={videoUrl ? 3 : 2} title="분절 시퀀싱" className="section-velocity" subtitle="P→T→A 타이밍 (구속 관점)">
+            <PerspectiveIntro kind="velocity">
+              <b>구속 관점:</b> 골반 → 몸통 → 팔이 순서대로 가속해야 채찍 효과로 공이 빨라집니다. 시간 차이가 잘 벌어질수록(Lag↑) 다음 분절이 더 큰 운동량을 받습니다.
+            </PerspectiveIntro>
             <window.BBLCharts.SequenceChart sequence={toSequenceProps(analysis)}/>
             <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
               <KinCard title="P→T lag" mean={sequencing.ptLag.mean} sd={sequencing.ptLag.sd}
@@ -2023,7 +2424,10 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 4 : 3} title="Peak 각속도" subtitle="3분절 회전 + 마네킹 시각화">
+          <Section n={videoUrl ? 4 : 3} title="Peak 각속도" className="section-velocity" subtitle="3분절 회전 = 절대 파워">
+            <PerspectiveIntro kind="velocity">
+              <b>구속 관점:</b> 회전 속도는 공의 빠르기로 직결되는 절대 파워입니다. 골반·몸통·팔의 peak 각속도가 클수록, 또 분절을 거칠수록 증가율이 높을수록 강한 공을 던집니다.
+            </PerspectiveIntro>
             <window.BBLCharts.AngularChart angular={toAngularProps(analysis)}/>
             {(() => { const s = summarizeAngular(summary); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
             <InfoBox items={[
@@ -2058,8 +2462,96 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 5 : 4} title="키네틱 체인 & 정밀 지표 통합 분석"
+          <Section n={videoUrl ? 5 : 4} title="구속 키네매틱스" className="section-velocity" subtitle="MER, 가동범위, 자세 (관찰 단계)">
+            <PerspectiveIntro kind="velocity">
+              <b>구속 관점:</b> 어깨 외회전 각도(MER), 골반-몸통 분리각, 스트라이드 길이 등은 "얼마나 큰 가동범위로 던지는가"를 보여줍니다. 이 가동범위가 다음 섹션의 에너지 흐름으로 변환되어 구속이 만들어집니다.
+            </PerspectiveIntro>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <KinCard title="Max ER (어깨 외회전)" mean={summary.maxER?.mean} sd={summary.maxER?.sd}
+                lo={BBLAnalysis.ELITE.maxER.lo} hi={BBLAnalysis.ELITE.maxER.hi} unit="°" decimals={1}/>
+              <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
+                lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
+                hint="골반-몸통 분리각"/>
+              <KinCard title="Stride length" mean={summary.strideLength?.mean} sd={summary.strideLength?.sd}
+                lo={0.7} hi={1.2} unit="m" decimals={2}
+                hint={summary.strideRatio ? `입력 신장 대비 ${(summary.strideRatio.mean * 100).toFixed(0)}% (${summary.strideRatio.mean.toFixed(2)}x)` : null}/>
+              <KinCard title="Trunk forward tilt" mean={summary.trunkForwardTilt?.mean} sd={summary.trunkForwardTilt?.sd}
+                lo={BBLAnalysis.ELITE.trunkForwardTilt.lo} hi={BBLAnalysis.ELITE.trunkForwardTilt.hi} unit="°" decimals={1}/>
+              <KinCard title="Trunk lateral tilt" mean={summary.trunkLateralTilt?.mean} sd={summary.trunkLateralTilt?.sd}
+                lo={BBLAnalysis.ELITE.trunkLateralTilt.lo} hi={BBLAnalysis.ELITE.trunkLateralTilt.hi} unit="°" decimals={1}/>
+              <KinCard title="Arm slot" mean={summary.armSlotAngle?.mean} sd={summary.armSlotAngle?.sd}
+                lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
+            </div>
+
+            {/* Notice for trials with invalid Max ER (timeseries damage) */}
+            {(() => {
+              const invalidTrials = perTrialStats
+                .map((s, idx) => ({ s, idx }))
+                .filter(({ s }) => s.maxER_invalid);
+              if (invalidTrials.length === 0) return null;
+              return (
+                <div className="mt-2 px-3 py-2 rounded text-[11.5px]"
+                     style={{ background:'#1f1408', color:'#fbbf24', border:'1px solid #f59e0b40' }}>
+                  ⚠ Max ER 계산 불가 (시계열 손상) ·
+                  {' '}{invalidTrials.length}/{perTrialStats.length}개 trial{' '}
+                  ({invalidTrials.map(({ idx }) => `T${idx+1}`).join(', ')}) —
+                  {' '}어깨 외회전 시계열이 정상 범위(150~210°)를 벗어남. 해당 trial은 Max ER 평균 계산에서 자동 제외됨.
+                </div>
+              );
+            })()}
+
+            {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
+            <InfoBox items={[
+              {
+                term: 'Max ER (Maximum External Rotation, 최대 어깨 외회전)',
+                def: '공 놓기 직전 cocking 자세에서 어깨가 외회전한 최대 각도(°) — 흔히 "layback"이라고도 부른다. 어깨 관절의 humero-thoracic external rotation 측정.',
+                meaning: '팔이 뒤로 최대로 젖혀지면서 발생하는 신장반사(stretch reflex)와 견갑하근·대원근의 elastic energy storage가 팔의 빠른 internal rotation으로 전환된다. 이 각도가 클수록 더 빠른 공이 가능 (Werner et al. 1993, J Orthop Sports Phys Ther 17:274-278). Wight et al. 2004 (J Athl Train 39:381)는 max ER이 ball velocity의 가장 강한 단일 운동학 예측인자(r=0.59)임을 입증.',
+                method: 'Uplift CSV의 right(left)_shoulder_external_rotation 시계열에서 BR(공 놓는 시점) 기준 [-150ms, +30ms] 윈도우 내 최댓값. 단위 자동 감지(rad↔deg), wraparound unwrap 적용. 학술 정상 범위(150~210°)를 벗어나면 해당 trial은 "계산 불가 (시계열 손상)"로 표시되며 평균 계산에서 제외 — 다른 값으로 대체하지 않음.',
+                interpret: '엘리트 투수 170~195° (Crotin & Ramsey 2014, Med Sci Sports Exerc 46:565-571 — collegiate 평균 178°, MLB 평균 182°). < 155° = 가동성 부족 (전방 어깨 capsular tightness 가능), > 200° = 측정 오류 또는 과도한 부하 (어깨 부상 위험 — Reagan et al. 2002, Am J Sports Med 30:354-360). 시계열이 손상된 trial은 측정 신뢰도가 없으므로 평균 산출에서 제외하는 것이 적절.'
+              },
+              {
+                term: 'X-factor (골반-몸통 분리각, Hip-Shoulder Separation)',
+                def: '로딩 단계 끝(FC 부근)에서 골반과 몸통의 회전 각도 차이(°) — 즉 두 분절이 서로 얼마나 비틀어졌는지. McLean 1994 (J Appl Biomech)가 골프 스윙에서 처음 정의한 후 야구 투구에 도입됨 (Stodden 2001, PhD diss.).',
+                meaning: '클수록 코어 근육이 stretch되고 그 탄성에너지가 트렁크 회전 가속의 추진력이 된다. "분리"가 클수록 spring처럼 더 강한 회전 발생. Robb et al. 2010 (Am J Sports Med 38:2487-2493)은 hip rotation ROM과 hip-shoulder separation이 ball velocity와 r=0.42~0.58 상관임을 보고.',
+                method: '|pelvis_global_rotation − trunk_global_rotation|을 FC-100ms ~ FC+50ms 윈도우에서 max로 계산.',
+                interpret: '엘리트 35~60° (Stodden et al. 2001 / Matsuo et al. 2001). < 35° = 분리 부족(코어 회전력 작음), > 60° = 과회전(trunk lag risk + lumbar 부상 가능). MLB 평균은 약 55° (Wight 2004). 이 각이 클수록 ETI(P→T)도 자연스럽게 커지는 경향.'
+              },
+              {
+                term: 'Stride length & Stride ratio',
+                def: 'Stride length = 등판 시점 뒷발 위치에서 FC 시점 앞발 위치까지의 수평 거리(m). Stride ratio = stride length / 신장 (단위 없음).',
+                meaning: '긴 stride는 ① 더 긴 가속 거리 확보 ② 릴리스 포인트 전방 이동(타자와 거리 단축, perceived velocity 상승) ③ 강한 hip 추진 활용을 의미. Yanagisawa & Taniguchi 2020 (J Phys Ther 32:578-583)은 collegiate 투수에서 stride length와 ball velocity가 r=0.51 상관임을 보고. Manzi et al. 2021 (J Sports Sci 39:2658-2664)은 프로 투수에서 stride length가 1% 늘어날 때마다 elbow varus torque도 약 0.6% 증가함도 보고 — 즉 trade-off 존재.',
+                method: '뒷발 ankle Z 좌표(stable phase 평균)와 FC 시점 앞발 ankle Z 좌표의 차이. 신장은 입력값 사용. Montgomery & Knudson 2002 (ARCAA 17:75-84)이 표준화한 측정 방식.',
+                interpret: '엘리트 0.80~1.05x (% body height) — Fleisig et al. 1999는 다양한 발달 단계 비교에서 70~88% 범위 보고. < 0.80x = 추진력 부족 또는 hip mobility 제한, > 1.05x = 과한 stride로 균형 무너질 위험. 단, Matsuda 2025 (Front Sports Act Living 7:1534596)에 따르면 stride를 ±20% 인위적으로 바꿔도 ball velocity는 변하지 않음 — 즉 자연스러운 본인 stride가 가장 효율적.'
+              },
+              {
+                term: 'Trunk Forward Tilt @BR (몸통 전방 기울기)',
+                def: '공 놓기 시점에 몸통이 시상면(전후)으로 앞쪽으로 기울어진 각도(°).',
+                meaning: '강한 트렁크 굴곡은 어깨를 더 높이 올리고 릴리스 포인트를 타자 쪽으로 이동시켜 perceived velocity를 높인다. Stodden et al. 2005는 high-velocity 그룹이 평균 +6° 더 큰 forward tilt를 보임을 입증.',
+                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 시상면(Y-Z) 내 forward 기울기. atan2(forward 성분, vertical 성분).',
+                interpret: '엘리트 30~45° (Matsuo et al. 2001 / Werner et al. 2002). < 30° = 몸통 굴곡 활용 부족, > 50° = 과도하게 숙여 균형/제구 영향 + lumbar shear 부하 증가. Solomito et al. 2015 (Am J Sports Med 43:1235-1240)는 trunk forward tilt가 클수록 elbow varus torque도 비례 증가함을 보고하므로, 적정선 유지가 중요.'
+              },
+              {
+                term: 'Trunk Lateral Tilt @BR (몸통 측방 기울기, Contralateral Trunk Tilt)',
+                def: 'BR 시점에 몸통이 글러브 쪽(non-throwing side)으로 옆으로 기울어진 각도(°). 관상면(frontal plane) 측정.',
+                meaning: '측방 기울기가 클수록 over-the-top arm slot이 형성되고 직구 수직 break가 향상된다. 그러나 Solomito et al. 2015 (Am J Sports Med 43:1235-1240)는 lateral trunk tilt가 ball velocity와 양의 상관(r=0.32)이지만 동시에 elbow varus torque(r=0.58)와 shoulder distraction force(r=0.44)와도 강한 양의 상관 — 즉 부하-성능 trade-off가 가장 큰 변인.',
+                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 관상면(X-Y) 내 lateral 기울기.',
+                interpret: '15~35° 범위가 일반적. arm slot에 따라 적절한 값이 다름 (over-the-top 30°+, sidearm 10°-). Oyama et al. 2013 (Am J Sports Med 41:2430-2438)은 lateral tilt > 40°를 high-injury-risk threshold로 제시.'
+              },
+              {
+                term: 'Arm slot (팔의 릴리스 각도)',
+                def: 'BR 시점 어깨→손목 벡터가 수평선 대비 이루는 각도(°). 투수의 release plane 분류.',
+                meaning: '투수의 릴리스 자세 분류. 같은 구속이라도 arm slot에 따라 공의 움직임(magnus effect spin axis)과 시각적 효과가 달라진다. Whiteside et al. 2016 (Am J Sports Med 44:2202-2209)는 arm slot이 일관되지 않은 투수에서 UCL 손상 위험이 높음을 입증.',
+                method: 'atan2(wrist.y − shoulder.y, sqrt(Δx² + Δz²)) × 180/π.',
+                interpret: '70°+ = over-the-top, 30~70° = three-quarter, 0~30° = sidearm, < 0° = submarine. 본인의 자연 slot 유지가 중요 — slot 자체가 좋고 나쁨이 아니라 일관성이 핵심 (Werner et al. 2002).'
+              }
+            ]}/>
+          </Section>
+
+          <Section n={videoUrl ? 6 : 5} title="키네틱 체인 & 정밀 지표 통합 분석" className="section-velocity"
             subtitle={`종합 누수율 ${fmt.n1(energy.leakRate)}% · 5편 논문 기반 정밀 지표 포함`}>
+            <PerspectiveIntro kind="velocity">
+              <b>구속 관점 (PART B 종합):</b> 앞에서 본 가동범위·회전 속도가 실제로 어떻게 에너지로 전달되는지를 보여주는 통합 분석입니다. 누수가 적고 분절 간 증폭이 클수록 구속이 좋습니다.
+            </PerspectiveIntro>
             <div className="text-[10.5px] mb-2" style={{ color: '#94a3b8' }}>
               한 마네킹에 전신 키네틱 체인의 에너지 흐름과 5편 논문 기반 정밀 지표를 모두 표시했습니다.
               하단 분절 운동에너지·전이 비율 카드와 정밀 지표 카드는 마네킹의 색·맥동에 대응됩니다.
@@ -2664,89 +3156,86 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 6 : 5} title="핵심 키네매틱스" subtitle="6종 핵심 동작 지표">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <KinCard title="Max ER (어깨 외회전)" mean={summary.maxER?.mean} sd={summary.maxER?.sd}
-                lo={BBLAnalysis.ELITE.maxER.lo} hi={BBLAnalysis.ELITE.maxER.hi} unit="°" decimals={1}/>
-              <KinCard title="X-factor" mean={summary.maxXFactor?.mean} sd={summary.maxXFactor?.sd}
-                lo={BBLAnalysis.ELITE.maxXFactor.lo} hi={BBLAnalysis.ELITE.maxXFactor.hi} unit="°" decimals={1}
-                hint="골반-몸통 분리각"/>
-              <KinCard title="Stride length" mean={summary.strideLength?.mean} sd={summary.strideLength?.sd}
-                lo={0.7} hi={1.2} unit="m" decimals={2}
-                hint={summary.strideRatio ? `입력 신장 대비 ${(summary.strideRatio.mean * 100).toFixed(0)}% (${summary.strideRatio.mean.toFixed(2)}x)` : null}/>
-              <KinCard title="Trunk forward tilt" mean={summary.trunkForwardTilt?.mean} sd={summary.trunkForwardTilt?.sd}
-                lo={BBLAnalysis.ELITE.trunkForwardTilt.lo} hi={BBLAnalysis.ELITE.trunkForwardTilt.hi} unit="°" decimals={1}/>
-              <KinCard title="Trunk lateral tilt" mean={summary.trunkLateralTilt?.mean} sd={summary.trunkLateralTilt?.sd}
-                lo={BBLAnalysis.ELITE.trunkLateralTilt.lo} hi={BBLAnalysis.ELITE.trunkLateralTilt.hi} unit="°" decimals={1}/>
-              <KinCard title="Arm slot" mean={summary.armSlotAngle?.mean} sd={summary.armSlotAngle?.sd}
-                lo={30} hi={100} unit="°" decimals={1} hint={armSlotType}/>
+          <PartBanner letter="C" title="부상 위험성" subtitle="공을 던질 때 몸에 가해지는 부담 — 안전한 메커닉을 위한 점검"/>
+          <Section n={videoUrl ? 7 : 6} title="부상 위험 지표" className="section-injury"
+            subtitle="팔꿈치·어깨·몸통·다리 부담 종합">
+            <PerspectiveIntro kind="injury">
+              <b>부상 관점:</b> 강한 공을 던지는 능력만큼 중요한 것이 안전성입니다. 7가지 핵심 부상 위험 지표를 한눈에 점검하고, 위험 신호가 있으면 즉시 코치/트레이너 상담을 권장합니다.
+            </PerspectiveIntro>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+              {/* 1. Howenstein elbow load */}
+              {summary.elbowLoadEfficiency?.mean != null && (() => {
+                const eff = summary.elbowLoadEfficiency.mean;
+                const status = eff < 2.5 ? 'safe' : eff < 3.5 ? 'caution' : eff < 4 ? 'danger' : 'critical';
+                return (
+                  <InjuryCard icon="🦴" title="① 팔꿈치 부담" value={eff} unit="N·m / (m/s)" status={status}
+                    description="공 빠르기 대비 팔꿈치에 가해지는 합성 모멘트. 야구 부상의 가장 큰 비중."
+                    threshold="<2.5 안전 · 2.5~3.5 주의 · 3.5~4 위험 · ≥4 심각 (Howenstein 2019)"/>
+                );
+              })()}
+              {/* 2. MER over/under */}
+              {summary.maxER?.mean != null && (() => {
+                const mer = summary.maxER.mean;
+                const status = (mer < 155 || mer > 195) ? 'critical'
+                            : (mer < 160 || mer > 190) ? 'danger'
+                            : (mer < 165 || mer > 185) ? 'caution' : 'safe';
+                const note = mer < 165 ? '부족' : mer > 185 ? '과도' : '정상';
+                return (
+                  <InjuryCard icon="🤸" title="② MER (어깨 외회전)" value={mer} unit="°" status={status}
+                    description={`어깨가 뒤로 젖혀지는 각도. ${note}. 과도하면 후방 인대 스트레스, 부족하면 보상 동작.`}
+                    threshold="안전 165~185° · 주의 160~165° / 185~190° · 위험 <160° / >190°"/>
+                );
+              })()}
+              {/* 3. Cocking shoulder power */}
+              {summary.cockingPhaseArmPowerWPerKg?.mean != null && (() => {
+                const w = summary.cockingPhaseArmPowerWPerKg.mean;
+                const status = w > 55 ? 'danger' : w > 45 ? 'caution' : 'safe';
+                return (
+                  <InjuryCard icon="💪" title="③ 어깨 외회전 스트레스" value={w} unit="W/kg" status={status}
+                    description="공을 놓기 직전 어깨가 받는 회전 부하. 너무 높으면 회전근개·라브룸 부담."
+                    threshold="안전 <45 W/kg · 주의 45~55 · 위험 >55 (Wasserberger 2024)"/>
+                );
+              })()}
+              {/* 4. Trunk forward tilt */}
+              {summary.trunkForwardTilt?.mean != null && (() => {
+                const t = Math.abs(summary.trunkForwardTilt.mean);
+                const status = t > 45 ? 'danger' : t > 35 ? 'caution' : 'safe';
+                return (
+                  <InjuryCard icon="🤸" title="④ 몸통 과도 기울임" value={t} unit="°" status={status}
+                    description="릴리스 시점 몸통이 앞으로 얼마나 기울어졌는지. 과도하면 어깨에 추가 부담."
+                    threshold="안전 <35° · 주의 35~45° · 위험 >45°"/>
+                );
+              })()}
+              {/* 5. Energy leak */}
+              {energy?.leakRate != null && (() => {
+                const lr = energy.leakRate;
+                const status = lr > 30 ? 'danger' : lr > 20 ? 'caution' : lr > 12 ? 'caution' : 'safe';
+                return (
+                  <InjuryCard icon="🔥" title="⑤ 에너지 누수" value={lr} unit="%" status={status}
+                    description="하체에서 만든 힘이 팔까지 전달되지 못한 비율. 누수가 크면 팔이 그만큼 더 일해야 함 → 부상 누적."
+                    threshold="안전 <12% · 주의 12~20% · 위험 >20%"/>
+                );
+              })()}
+              {/* 6. Front-foot block instability */}
+              {summary.kneeFlexionAtFC?.mean != null && summary.kneeFlexionAtBR?.mean != null && (() => {
+                const collapse = summary.kneeFlexionAtFC.mean - summary.kneeFlexionAtBR.mean;
+                const status = collapse > 15 ? 'danger' : collapse > 5 ? 'caution' : 'safe';
+                const meaning = collapse > 5 ? '디딤발 무릎이 굽혀짐 (불안정)' : collapse < -5 ? '디딤발 무릎이 펴짐 (안정)' : '거의 변화 없음';
+                return (
+                  <InjuryCard icon="🦵" title="⑥ 디딤발 안정성" value={collapse} unit="°" status={status}
+                    description={`FC→BR 사이 디딤발 무릎 굴곡 변화. ${meaning}. 불안정하면 회전축 흔들리며 어깨/팔에 보상 부담.`}
+                    threshold="안전 <5° · 주의 5~15° · 위험 >15°"/>
+                );
+              })()}
             </div>
-
-            {/* Notice for trials with invalid Max ER (timeseries damage) */}
-            {(() => {
-              const invalidTrials = perTrialStats
-                .map((s, idx) => ({ s, idx }))
-                .filter(({ s }) => s.maxER_invalid);
-              if (invalidTrials.length === 0) return null;
-              return (
-                <div className="mt-2 px-3 py-2 rounded text-[11.5px]"
-                     style={{ background:'#1f1408', color:'#fbbf24', border:'1px solid #f59e0b40' }}>
-                  ⚠ Max ER 계산 불가 (시계열 손상) ·
-                  {' '}{invalidTrials.length}/{perTrialStats.length}개 trial{' '}
-                  ({invalidTrials.map(({ idx }) => `T${idx+1}`).join(', ')}) —
-                  {' '}어깨 외회전 시계열이 정상 범위(150~210°)를 벗어남. 해당 trial은 Max ER 평균 계산에서 자동 제외됨.
-                </div>
-              );
-            })()}
-
-            {(() => { const s = summarizeKinematics(summary, armSlotType); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
-            <InfoBox items={[
-              {
-                term: 'Max ER (Maximum External Rotation, 최대 어깨 외회전)',
-                def: '공 놓기 직전 cocking 자세에서 어깨가 외회전한 최대 각도(°) — 흔히 "layback"이라고도 부른다. 어깨 관절의 humero-thoracic external rotation 측정.',
-                meaning: '팔이 뒤로 최대로 젖혀지면서 발생하는 신장반사(stretch reflex)와 견갑하근·대원근의 elastic energy storage가 팔의 빠른 internal rotation으로 전환된다. 이 각도가 클수록 더 빠른 공이 가능 (Werner et al. 1993, J Orthop Sports Phys Ther 17:274-278). Wight et al. 2004 (J Athl Train 39:381)는 max ER이 ball velocity의 가장 강한 단일 운동학 예측인자(r=0.59)임을 입증.',
-                method: 'Uplift CSV의 right(left)_shoulder_external_rotation 시계열에서 BR(공 놓는 시점) 기준 [-150ms, +30ms] 윈도우 내 최댓값. 단위 자동 감지(rad↔deg), wraparound unwrap 적용. 학술 정상 범위(150~210°)를 벗어나면 해당 trial은 "계산 불가 (시계열 손상)"로 표시되며 평균 계산에서 제외 — 다른 값으로 대체하지 않음.',
-                interpret: '엘리트 투수 170~195° (Crotin & Ramsey 2014, Med Sci Sports Exerc 46:565-571 — collegiate 평균 178°, MLB 평균 182°). < 155° = 가동성 부족 (전방 어깨 capsular tightness 가능), > 200° = 측정 오류 또는 과도한 부하 (어깨 부상 위험 — Reagan et al. 2002, Am J Sports Med 30:354-360). 시계열이 손상된 trial은 측정 신뢰도가 없으므로 평균 산출에서 제외하는 것이 적절.'
-              },
-              {
-                term: 'X-factor (골반-몸통 분리각, Hip-Shoulder Separation)',
-                def: '로딩 단계 끝(FC 부근)에서 골반과 몸통의 회전 각도 차이(°) — 즉 두 분절이 서로 얼마나 비틀어졌는지. McLean 1994 (J Appl Biomech)가 골프 스윙에서 처음 정의한 후 야구 투구에 도입됨 (Stodden 2001, PhD diss.).',
-                meaning: '클수록 코어 근육이 stretch되고 그 탄성에너지가 트렁크 회전 가속의 추진력이 된다. "분리"가 클수록 spring처럼 더 강한 회전 발생. Robb et al. 2010 (Am J Sports Med 38:2487-2493)은 hip rotation ROM과 hip-shoulder separation이 ball velocity와 r=0.42~0.58 상관임을 보고.',
-                method: '|pelvis_global_rotation − trunk_global_rotation|을 FC-100ms ~ FC+50ms 윈도우에서 max로 계산.',
-                interpret: '엘리트 35~60° (Stodden et al. 2001 / Matsuo et al. 2001). < 35° = 분리 부족(코어 회전력 작음), > 60° = 과회전(trunk lag risk + lumbar 부상 가능). MLB 평균은 약 55° (Wight 2004). 이 각이 클수록 ETI(P→T)도 자연스럽게 커지는 경향.'
-              },
-              {
-                term: 'Stride length & Stride ratio',
-                def: 'Stride length = 등판 시점 뒷발 위치에서 FC 시점 앞발 위치까지의 수평 거리(m). Stride ratio = stride length / 신장 (단위 없음).',
-                meaning: '긴 stride는 ① 더 긴 가속 거리 확보 ② 릴리스 포인트 전방 이동(타자와 거리 단축, perceived velocity 상승) ③ 강한 hip 추진 활용을 의미. Yanagisawa & Taniguchi 2020 (J Phys Ther 32:578-583)은 collegiate 투수에서 stride length와 ball velocity가 r=0.51 상관임을 보고. Manzi et al. 2021 (J Sports Sci 39:2658-2664)은 프로 투수에서 stride length가 1% 늘어날 때마다 elbow varus torque도 약 0.6% 증가함도 보고 — 즉 trade-off 존재.',
-                method: '뒷발 ankle Z 좌표(stable phase 평균)와 FC 시점 앞발 ankle Z 좌표의 차이. 신장은 입력값 사용. Montgomery & Knudson 2002 (ARCAA 17:75-84)이 표준화한 측정 방식.',
-                interpret: '엘리트 0.80~1.05x (% body height) — Fleisig et al. 1999는 다양한 발달 단계 비교에서 70~88% 범위 보고. < 0.80x = 추진력 부족 또는 hip mobility 제한, > 1.05x = 과한 stride로 균형 무너질 위험. 단, Matsuda 2025 (Front Sports Act Living 7:1534596)에 따르면 stride를 ±20% 인위적으로 바꿔도 ball velocity는 변하지 않음 — 즉 자연스러운 본인 stride가 가장 효율적.'
-              },
-              {
-                term: 'Trunk Forward Tilt @BR (몸통 전방 기울기)',
-                def: '공 놓기 시점에 몸통이 시상면(전후)으로 앞쪽으로 기울어진 각도(°).',
-                meaning: '강한 트렁크 굴곡은 어깨를 더 높이 올리고 릴리스 포인트를 타자 쪽으로 이동시켜 perceived velocity를 높인다. Stodden et al. 2005는 high-velocity 그룹이 평균 +6° 더 큰 forward tilt를 보임을 입증.',
-                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 시상면(Y-Z) 내 forward 기울기. atan2(forward 성분, vertical 성분).',
-                interpret: '엘리트 30~45° (Matsuo et al. 2001 / Werner et al. 2002). < 30° = 몸통 굴곡 활용 부족, > 50° = 과도하게 숙여 균형/제구 영향 + lumbar shear 부하 증가. Solomito et al. 2015 (Am J Sports Med 43:1235-1240)는 trunk forward tilt가 클수록 elbow varus torque도 비례 증가함을 보고하므로, 적정선 유지가 중요.'
-              },
-              {
-                term: 'Trunk Lateral Tilt @BR (몸통 측방 기울기, Contralateral Trunk Tilt)',
-                def: 'BR 시점에 몸통이 글러브 쪽(non-throwing side)으로 옆으로 기울어진 각도(°). 관상면(frontal plane) 측정.',
-                meaning: '측방 기울기가 클수록 over-the-top arm slot이 형성되고 직구 수직 break가 향상된다. 그러나 Solomito et al. 2015 (Am J Sports Med 43:1235-1240)는 lateral trunk tilt가 ball velocity와 양의 상관(r=0.32)이지만 동시에 elbow varus torque(r=0.58)와 shoulder distraction force(r=0.44)와도 강한 양의 상관 — 즉 부하-성능 trade-off가 가장 큰 변인.',
-                method: 'BR 프레임에서 pelvis → proximal_neck 벡터의 관상면(X-Y) 내 lateral 기울기.',
-                interpret: '15~35° 범위가 일반적. arm slot에 따라 적절한 값이 다름 (over-the-top 30°+, sidearm 10°-). Oyama et al. 2013 (Am J Sports Med 41:2430-2438)은 lateral tilt > 40°를 high-injury-risk threshold로 제시.'
-              },
-              {
-                term: 'Arm slot (팔의 릴리스 각도)',
-                def: 'BR 시점 어깨→손목 벡터가 수평선 대비 이루는 각도(°). 투수의 release plane 분류.',
-                meaning: '투수의 릴리스 자세 분류. 같은 구속이라도 arm slot에 따라 공의 움직임(magnus effect spin axis)과 시각적 효과가 달라진다. Whiteside et al. 2016 (Am J Sports Med 44:2202-2209)는 arm slot이 일관되지 않은 투수에서 UCL 손상 위험이 높음을 입증.',
-                method: 'atan2(wrist.y − shoulder.y, sqrt(Δx² + Δz²)) × 180/π.',
-                interpret: '70°+ = over-the-top, 30~70° = three-quarter, 0~30° = sidearm, < 0° = submarine. 본인의 자연 slot 유지가 중요 — slot 자체가 좋고 나쁨이 아니라 일관성이 핵심 (Werner et al. 2002).'
-              }
-            ]}/>
           </Section>
 
-          <Section n={videoUrl ? 7 : 6} title="결함 플래그" subtitle="7-요인 등급 + 12종 세부 발생률">
+          {/* PART C — Section 8: Faults (now positioned in injury part) */}
+          <Section n={videoUrl ? 8 : 7} title="결함 플래그" className="section-injury" subtitle="DEC, Inv-W 등 12종 부상 결함 발생률">
+            <PerspectiveIntro kind="injury">
+              <b>부상 관점:</b> 결함 패턴은 부상 위험 + 구속 손실 두 가지를 동시에 일으킵니다. 발생률이 높을수록 우선 교정 대상입니다.
+            </PerspectiveIntro>
             <FaultGrid faultRates={faultRates} factors={factors}/>
             {(() => { const s = summarizeFaults(faultRates, factors); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
             <InfoBox items={[
@@ -2774,7 +3263,11 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 8 : 7} title="제구 능력" subtitle="릴리스 일관성 기반">
+          <PartBanner letter="D" title="제구 — 일관성과 안정성" subtitle="매 투구 같은 위치로 던지는 능력 — 시기 간 변동(CV)이 핵심"/>
+          <Section n={videoUrl ? 9 : 8} title="제구 능력" className="section-command" subtitle="릴리스 일관성 + 키네매틱 변동성 종합">
+            <PerspectiveIntro kind="command">
+              <b>제구 관점:</b> 같은 동작을 매번 반복할 수 있어야 공이 같은 위치로 갑니다. 릴리스 포인트의 분산이 작을수록 제구가 좋습니다.
+            </PerspectiveIntro>
             <CommandPanel command={command}/>
             {(() => { const s = summarizeCommand(command); return <SummaryBox tone={s.tone} title="결과 한눈에 보기" text={s.text}/>; })()}
             <InfoBox items={[
@@ -2802,43 +3295,262 @@
             ]}/>
           </Section>
 
-          <Section n={videoUrl ? 9 : 8} title="강점 · 개선점" subtitle="자동 평가">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#6ee7b7' }}>
-                  <IconCheck size={11}/> 강점 ({evaluation.strengths.length})
-                </div>
-                {evaluation.strengths.length === 0 ? (
-                  <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 강점 없음</div>
-                ) : (
-                  <ul className="space-y-2">
-                    {evaluation.strengths.map((s, i) => (
-                      <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
-                        <span className="font-semibold" style={{ color: '#6ee7b7' }}>· {s.title}</span>
-                        <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div>
-                <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#fbbf24' }}>
-                  <IconAlert size={11}/> 개선점 ({evaluation.improvements.length})
-                </div>
-                {evaluation.improvements.length === 0 ? (
-                  <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 개선점 없음</div>
-                ) : (
-                  <ul className="space-y-2">
-                    {evaluation.improvements.map((s, i) => (
-                      <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
-                        <span className="font-semibold" style={{ color: '#fbbf24' }}>· {s.title}</span>
-                        <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+          {/* PART D — Section 10: Sequencing & Angular Velocity Consistency */}
+          <Section n={videoUrl ? 10 : 9} title="시퀀싱·각속도 일관성" className="section-command"
+            subtitle="시기 간 변동(CV) 기반">
+            <PerspectiveIntro kind="command">
+              <b>제구 관점:</b> 앞 PART B에서는 시퀀싱·각속도의 평균을 보며 구속을 평가했습니다. 같은 변인을 여러 투구 간 변동(CV%)으로 보면 제구 일관성이 됩니다.
+            </PerspectiveIntro>
+            <div className="text-[10.5px] mb-2" style={{ color: '#94a3b8' }}>
+              CV(변동계수) = 표준편차 / 평균 × 100%. 같은 동작을 매번 동일하게 반복할수록 CV가 낮아집니다.
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+              {/* P→T lag consistency */}
+              {summary.ptLagMs?.cv != null && (
+                <ConsistencyCard
+                  label="P→T 타이밍 일관성"
+                  value={summary.ptLagMs.cv}
+                  unit="CV%"
+                  threshold={{ elite: 15, good: 25, ok: 40 }}
+                  description="골반→몸통 분절 가속 타이밍의 시기 간 변동"/>
+              )}
+              {/* T→A lag consistency */}
+              {summary.taLagMs?.cv != null && (
+                <ConsistencyCard
+                  label="T→A 타이밍 일관성"
+                  value={summary.taLagMs.cv}
+                  unit="CV%"
+                  threshold={{ elite: 15, good: 25, ok: 40 }}
+                  description="몸통→팔 분절 가속 타이밍의 시기 간 변동"/>
+              )}
+              {/* FC→BR consistency */}
+              {summary.fcBrMs?.cv != null && (
+                <ConsistencyCard
+                  label="FC→릴리스 타이밍"
+                  value={summary.fcBrMs.cv}
+                  unit="CV%"
+                  threshold={{ elite: 2, good: 5, ok: 10 }}
+                  description="앞발 착지에서 릴리스까지 시간의 일관성 (제구 핵심)"/>
+              )}
+              {/* Arm angular velocity consistency */}
+              {summary.peakArmAngVel?.cv != null && (
+                <ConsistencyCard
+                  label="팔 각속도 일관성"
+                  value={summary.peakArmAngVel.cv}
+                  unit="CV%"
+                  threshold={{ elite: 5, good: 10, ok: 15 }}
+                  description="팔 peak 회전 속도의 시기 간 변동"/>
+              )}
+              {/* Trunk angular velocity consistency */}
+              {summary.peakTrunkAngVel?.cv != null && (
+                <ConsistencyCard
+                  label="몸통 각속도 일관성"
+                  value={summary.peakTrunkAngVel.cv}
+                  unit="CV%"
+                  threshold={{ elite: 5, good: 10, ok: 15 }}
+                  description="몸통 peak 회전 속도의 시기 간 변동"/>
+              )}
+              {/* Pelvis angular velocity consistency */}
+              {summary.peakPelvisAngVel?.cv != null && (
+                <ConsistencyCard
+                  label="골반 각속도 일관성"
+                  value={summary.peakPelvisAngVel.cv}
+                  unit="CV%"
+                  threshold={{ elite: 5, good: 10, ok: 15 }}
+                  description="골반 peak 회전 속도의 시기 간 변동"/>
+              )}
+            </div>
+          </Section>
+
+          {/* PART D — Section 11: Command Kinematics (consistency in posture/position) */}
+          <Section n={videoUrl ? 11 : 10} title="제구 키네매틱스" className="section-command"
+            subtitle="자세·위치의 일관성 (SD)">
+            <PerspectiveIntro kind="command">
+              <b>제구 관점:</b> MER, 스트라이드 길이, 몸통 기울기 등 키네매틱 변인의 시기 간 변동을 봅니다. 이들이 일정해야 릴리스 포인트도 일정합니다.
+            </PerspectiveIntro>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+              {summary.maxER?.cv != null && (
+                <ConsistencyCard
+                  label="Max ER (MER) 일관성"
+                  value={summary.maxER.cv}
+                  unit="CV%"
+                  threshold={{ elite: 7, good: 12, ok: 18 }}
+                  description="어깨 외회전 각도의 시기 간 변동"/>
+              )}
+              {summary.strideLength?.cv != null && (
+                <ConsistencyCard
+                  label="스트라이드 길이 일관성"
+                  value={summary.strideLength.cv}
+                  unit="CV%"
+                  threshold={{ elite: 3, good: 5, ok: 8 }}
+                  description="디딤발 위치(보폭)의 시기 간 변동 — 제구의 공간적 기준"/>
+              )}
+              {summary.armSlotAngle?.sd != null && (
+                <ConsistencyCard
+                  label="Arm slot 일관성"
+                  value={summary.armSlotAngle.sd}
+                  unit="° SD"
+                  threshold={{ elite: 2, good: 3, ok: 5 }}
+                  description="팔 각도(릴리스 슬롯)의 시기 간 변동"/>
+              )}
+              {summary.trunkForwardTilt?.sd != null && (
+                <ConsistencyCard
+                  label="몸통 기울기 일관성"
+                  value={summary.trunkForwardTilt.sd}
+                  unit="° SD"
+                  threshold={{ elite: 3, good: 5, ok: 8 }}
+                  description="몸통 forward tilt의 시기 간 변동"/>
+              )}
+              {summary.maxXFactor?.cv != null && (
+                <ConsistencyCard
+                  label="X-factor 일관성"
+                  value={summary.maxXFactor.cv}
+                  unit="CV%"
+                  threshold={{ elite: 8, good: 14, ok: 22 }}
+                  description="골반-몸통 분리각의 시기 간 변동"/>
+              )}
+            </div>
+          </Section>
+
+          <PartBanner letter="E" title="종합 평가" subtitle="구속·부상·제구 점수와 우선순위 개선점"/>
+          <Section n={videoUrl ? 12 : 11} title="종합 점수 & 우선순위" className="section-summary"
+            subtitle="구속/부상/제구 한눈에 보기">
+            <PerspectiveIntro kind="shared">
+              앞에서 본 모든 분석을 바탕으로 <b>구속</b>·<b>부상 위험</b>·<b>제구</b> 세 차원의 점수를 산출하고, 가장 시급한 개선 우선순위 3개를 제시합니다.
+            </PerspectiveIntro>
+
+            {(() => {
+              const velocityScore = calcVelocityScore({ summary, energy });
+              const commandScore  = calcCommandScore({ summary, command, perTrialStats });
+              const injury        = calcInjuryScore({ summary, energy, faultRates });
+              const priorities    = generatePriorities({
+                velocityScore, commandScore, injury, summary, energy
+              });
+
+              return (
+                <>
+                  {/* Score cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <ScoreCard
+                      kind="velocity"
+                      label="① 구속 (파워)"
+                      grade={scoreToGrade(velocityScore)}
+                      value={velocityScore}
+                      valueUnit="/ 100"
+                      detail={summary.velocity?.mean != null
+                        ? `평균 ${summary.velocity.mean.toFixed(1)} m/s · 팔 회전 ${summary.peakArmAngVel?.mean?.toFixed(0) || '—'}°/s · 누수율 ${energy?.leakRate?.toFixed(1) || '—'}%`
+                        : '구속/에너지 데이터 없음'}/>
+                    <ScoreCard
+                      kind="command"
+                      label="③ 제구 (일관성)"
+                      grade={scoreToGrade(commandScore)}
+                      value={commandScore}
+                      valueUnit="/ 100"
+                      detail={summary.fcBrMs?.cv != null
+                        ? `FC→BR CV ${summary.fcBrMs.cv.toFixed(1)}% · Stride CV ${summary.strideLength?.cv?.toFixed(1) || '—'}% · MER CV ${summary.maxER?.cv?.toFixed(1) || '—'}%`
+                        : '일관성 데이터 없음'}/>
+                    {/* Injury card — different design (lower = safer, so invert grade logic) */}
+                    {injury.score != null && (() => {
+                      const inv = 100 - injury.score;
+                      return (
+                        <div className="score-card" style={{
+                          borderColor: injury.score >= 60 ? 'rgba(239,68,68,0.4)' : injury.score >= 40 ? 'rgba(245,158,11,0.4)' : 'rgba(16,185,129,0.4)'
+                        }}>
+                          <div className="score-label" style={{
+                            color: injury.score >= 60 ? '#fca5a5' : injury.score >= 40 ? '#fbbf24' : '#6ee7b7'
+                          }}>② 부상 위험</div>
+                          <div className="flex items-baseline">
+                            <span className="score-grade" style={{
+                              color: injury.score >= 60 ? '#ef4444' : injury.score >= 40 ? '#f59e0b' : '#10b981'
+                            }}>
+                              {injury.score >= 70 ? '심각' : injury.score >= 50 ? '높음' : injury.score >= 30 ? '주의' : '안전'}
+                            </span>
+                            <span className="score-value">{injury.score.toFixed(0)}<span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 4 }}>/ 100</span></span>
+                          </div>
+                          <div className="score-detail">
+                            높을수록 위험. 팔꿈치·어깨·몸통·다리 7개 지표 가중 평균.
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Priority improvements */}
+                  {priorities.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-[11px] uppercase tracking-wider font-bold mb-2" style={{ color: '#94a3b8' }}>
+                        🎯 우선순위 개선점 ({priorities.length}개)
+                      </div>
+                      {priorities.map((p, i) => (
+                        <PriorityFix
+                          key={i}
+                          rank={i + 1}
+                          kind={p.kind}
+                          title={p.title}
+                          detail={p.detail}
+                          action={p.action}/>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Critical injury alert */}
+                  {injury.score != null && injury.score >= 60 && (
+                    <div className="mb-4 p-3 rounded" style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      color: '#fca5a5'
+                    }}>
+                      <div className="text-[12px] font-bold mb-1">⚠️ 부상 위험 경고</div>
+                      <div className="text-[11px]" style={{ color: '#fecaca', lineHeight: 1.6 }}>
+                        부상 위험 종합 점수가 <b>{injury.score.toFixed(0)}/100</b>으로 높습니다.
+                        투구 수 제한, 회복 기간 충분히 확보, 트레이너/팀닥터 상담을 권장합니다.
+                        세부 위험 지표는 PART C 부상 위험 지표를 참고하세요.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Existing strengths/improvements (preserved as supplementary) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#6ee7b7' }}>
+                        <IconCheck size={11}/> 강점 ({evaluation.strengths.length})
+                      </div>
+                      {evaluation.strengths.length === 0 ? (
+                        <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 강점 없음</div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {evaluation.strengths.map((s, i) => (
+                            <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                              <span className="font-semibold" style={{ color: '#6ee7b7' }}>· {s.title}</span>
+                              <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#fbbf24' }}>
+                        <IconAlert size={11}/> 추가 개선 영역 ({evaluation.improvements.length})
+                      </div>
+                      {evaluation.improvements.length === 0 ? (
+                        <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>감지된 개선점 없음</div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {evaluation.improvements.map((s, i) => (
+                            <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                              <span className="font-semibold" style={{ color: '#fbbf24' }}>· {s.title}</span>
+                              <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </Section>
 
           </>
