@@ -2134,10 +2134,8 @@
     return btoa(bin);
   }
 
-  async function uploadReportToGithub(payload, { owner, repo, branch }, token) {
-    const id = makeReportId(payload.pitcher);
-    const path = `reports/${id}.json`;
-    const json = JSON.stringify(payload);
+  // v69 — Generic helper: upload one file to GitHub Contents API (handles update + create)
+  async function uploadFileToGithub(path, base64Content, commitMessage, { owner, repo, branch }, token) {
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
     const headers = {
       'Authorization': `Bearer ${token}`,
@@ -2145,9 +2143,7 @@
       'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json'
     };
-
-    // Step 1: Check if the file already exists. If yes, fetch its SHA so we
-    // can overwrite. The Contents API requires `sha` field for updates.
+    // Check if file exists
     let existingSha = null;
     try {
       const checkRes = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, { headers });
@@ -2155,19 +2151,13 @@
         const existing = await checkRes.json();
         if (existing && existing.sha) existingSha = existing.sha;
       }
-      // 404 just means file doesn't exist yet (that's fine, will create new)
-    } catch (e) {
-      // Network errors here aren't fatal — fall through to PUT and let it fail there
-    }
-
-    // Step 2: PUT (create or update)
+    } catch (e) {}
     const body = {
-      message: existingSha ? `Update report ${id}` : `Add report ${id}`,
-      content: utf8ToBase64(json),
+      message: commitMessage,
+      content: base64Content,
       branch
     };
     if (existingSha) body.sha = existingSha;
-
     const res = await fetch(apiUrl, {
       method: 'PUT',
       headers,
@@ -2181,7 +2171,72 @@
       } catch (e) {}
       throw new Error(`GitHub 업로드 실패 (${res.status}): ${detail}`);
     }
-    return { id, isUpdate: !!existingSha };
+    return { isUpdate: !!existingSha };
+  }
+
+  // v69 — Encode Blob to base64 (without data: prefix)
+  async function blobToBase64NoPrefix(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function uploadReportToGithub(payload, { owner, repo, branch }, token) {
+    const id = makeReportId(payload.pitcher);
+
+    // v69 — If payload has an embedded video (base64 in payload.video.base64),
+    // upload it as a separate file to avoid GitHub Contents API 50MB limit on the JSON.
+    // Replace the embedded base64 with a path reference.
+    let videoUploadResult = null;
+    if (payload.video && payload.video.base64) {
+      const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
+      const videoPath = `reports/videos/${id}.${videoExt}`;
+      try {
+        videoUploadResult = await uploadFileToGithub(
+          videoPath,
+          payload.video.base64,
+          `Update video for ${id}`,
+          { owner, repo, branch },
+          token
+        );
+        // Replace embedded base64 with path reference (slim payload)
+        payload = {
+          ...payload,
+          video: {
+            path: videoPath,
+            filename: payload.video.filename,
+            size: payload.video.size,
+            mimeType: payload.video.mimeType
+            // base64 removed — fetched separately at runtime
+          }
+        };
+      } catch (e) {
+        // If video upload fails (e.g. video itself > 100MB), warn but continue with JSON-only
+        const msg = `영상 업로드 실패 (${e.message}). 영상 없이 분석 결과만 게시합니다.`;
+        console.warn(msg);
+        if (typeof alert !== 'undefined') alert(msg + '\n\n영상을 더 작게 압축한 뒤 다시 시도하세요 (권장: 720p, 30초 이내).');
+        payload = { ...payload, video: null };
+      }
+    }
+
+    // Now upload the JSON (much smaller without embedded video)
+    const path = `reports/${id}.json`;
+    const json = JSON.stringify(payload);
+    const result = await uploadFileToGithub(
+      path,
+      utf8ToBase64(json),
+      videoUploadResult ? `Update report ${id} (with video)` : `Update report ${id}`,
+      { owner, repo, branch },
+      token
+    );
+    return { id, isUpdate: result.isUpdate, videoUploaded: !!videoUploadResult };
   }
 
   function GitHubTokenSetupModal({ initialConfig, onSave, onClose }) {
@@ -2341,13 +2396,16 @@
             return;
           }
         }
-        const { id, isUpdate } = await uploadReportToGithub(payload, cfg, token);
+        const { id, isUpdate, videoUploaded } = await uploadReportToGithub(payload, cfg, token);
         const url = `${window.location.origin}${window.location.pathname}#/r/${id}`;
         try { await navigator.clipboard.writeText(url); } catch (e) {}
         const action = isUpdate ? '갱신' : '생성';
+        const videoNote = videoUploaded
+          ? `\n📹 영상도 함께 업로드되었습니다 (별도 파일).`
+          : (payload.video ? '' : '');
         const note = isUpdate
-          ? `기존 링크가 자동으로 새 분석 결과로 갱신되었습니다.\n선수가 이미 받은 URL을 다시 클릭하면 새 결과를 봅니다 (URL 재전송 불필요).\n\n⚠️ GitHub Pages 갱신에는 30-90초가 걸립니다.`
-          : `⚠️ GitHub Pages가 새 리포트를 배포하는 데 30-90초 정도 걸립니다.\n그 전에 클릭하면 "리포트를 찾을 수 없음"이 뜰 수 있으니, 1-2분 뒤 선수에게 보내주세요.`;
+          ? `기존 링크가 자동으로 새 분석 결과로 갱신되었습니다.\n선수가 이미 받은 URL을 다시 클릭하면 새 결과를 봅니다 (URL 재전송 불필요).${videoNote}\n\n⚠️ GitHub Pages 갱신에는 30-90초가 걸립니다.`
+          : `${videoNote}\n\n⚠️ GitHub Pages가 새 리포트를 배포하는 데 30-90초 정도 걸립니다.\n그 전에 클릭하면 "리포트를 찾을 수 없음"이 뜰 수 있으니, 1-2분 뒤 선수에게 보내주세요.`;
         const msg = `짧은 리포트 URL이 ${action}되었습니다 (클립보드 복사됨)\n\n${url}\n\n${note}`;
         if (navigator.share) {
           try {
@@ -2550,22 +2608,44 @@
       }
     }, [videoBlob]);
 
-    // v58 — Shared mode: restore video from sharedPayload.video.base64
+    // Shared mode: restore video either from inline base64 (legacy v58) or from path (v69+)
     useEffect(() => {
       if (!isShared) return;
       const v = sharedPayload?.video;
-      if (!v || !v.base64) return;
-      try {
-        // Decode base64 → Uint8Array → Blob
-        const byteString = atob(v.base64);
-        const bytes = new Uint8Array(byteString.length);
-        for (let i = 0; i < byteString.length; i++) {
-          bytes[i] = byteString.charCodeAt(i);
+      if (!v) return;
+
+      // v69 — New format: video stored as separate file at v.path. Fetch it and convert to Blob.
+      if (v.path && !v.base64) {
+        (async () => {
+          try {
+            // Build the URL relative to the current GitHub Pages site root
+            // window.location.pathname is e.g. "/Uplift-Labs-Report/" — combine with v.path
+            const baseUrl = `${window.location.origin}${window.location.pathname}`.replace(/\/$/, '/');
+            const videoUrl = `${baseUrl}${v.path}`;
+            const res = await fetch(videoUrl, { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            setVideoBlob(blob);
+          } catch (e) {
+            console.warn('Failed to fetch external video file:', e);
+          }
+        })();
+        return;
+      }
+
+      // v58 (legacy) — Inline base64 video in payload
+      if (v.base64) {
+        try {
+          const byteString = atob(v.base64);
+          const bytes = new Uint8Array(byteString.length);
+          for (let i = 0; i < byteString.length; i++) {
+            bytes[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: v.mimeType || 'video/mp4' });
+          setVideoBlob(blob);
+        } catch (e) {
+          console.error('Failed to decode shared video:', e);
         }
-        const blob = new Blob([bytes], { type: v.mimeType || 'video/mp4' });
-        setVideoBlob(blob);
-      } catch (e) {
-        console.error('Failed to decode shared video:', e);
       }
     }, [isShared]);
 
