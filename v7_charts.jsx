@@ -1017,12 +1017,28 @@
       rToe:     [658, 435]
     };
 
-    // Full kinetic chain energy path: stride foot → knee → pelvis → trunk
-    // → shoulder → elbow → wrist → ball
-    const energyPath = `
+    // v77 — Full kinetic chain energy path with BOTH legs:
+    //   Pivot leg (back/push-off foot): rAnkle → rKnee → pelvisC
+    //   Stride leg (front/landing foot): lAnkle → lKnee → pelvisC
+    //   Both legs contribute to ground reaction force → pelvis rotation.
+    //   From pelvis, single path: pelvis → trunk → shoulder → elbow → wrist → ball
+    //
+    // Biomechanical rationale (Aguinaldo 2007, Howenstein 2019):
+    //   - Pivot leg drives initial pelvis rotation via push-off + ground reaction
+    //   - Stride leg blocks at FC, decelerating pelvis to drive trunk rotation
+    //   - Both feet act as the kinetic chain's primary energy source
+    const energyPathPivotLeg = `
+      M ${K.rAnkle[0]} ${K.rAnkle[1]}
+      L ${K.rKnee[0]} ${K.rKnee[1]}
+      L ${K.pelvisC[0]} ${K.pelvisC[1]}
+    `;
+    const energyPathStrideLeg = `
       M ${K.lAnkle[0]} ${K.lAnkle[1]}
       L ${K.lKnee[0]} ${K.lKnee[1]}
       L ${K.pelvisC[0]} ${K.pelvisC[1]}
+    `;
+    const energyPathUpperChain = `
+      M ${K.pelvisC[0]} ${K.pelvisC[1]}
       L ${K.neck[0]} ${K.neck[1] + 5}
       L ${K.rShoulder[0]} ${K.rShoulder[1]}
       L ${K.rElbow[0]} ${K.rElbow[1]}
@@ -1043,6 +1059,26 @@
               <stop offset="0%"   stopColor="#22d3ee"/>
               <stop offset="28%"  stopColor={ptC.color}/>
               <stop offset="55%"  stopColor={taC.color}/>
+              <stop offset="85%"  stopColor={taC.color}/>
+              <stop offset="100%" stopColor={taC.dark}/>
+            </linearGradient>
+            {/* v77 — Pivot leg gradient (back foot → pelvis): cyan ground reaction → ptC color at pelvis */}
+            <linearGradient id={`ik-energy-pivot-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.rAnkle[0]} y1={K.rAnkle[1]} x2={K.pelvisC[0]} y2={K.pelvisC[1]}>
+              <stop offset="0%"   stopColor="#22d3ee"/>
+              <stop offset="100%" stopColor={ptC.color}/>
+            </linearGradient>
+            {/* v77 — Stride leg gradient (front foot → pelvis): cyan ground reaction → ptC color */}
+            <linearGradient id={`ik-energy-stride-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.lAnkle[0]} y1={K.lAnkle[1]} x2={K.pelvisC[0]} y2={K.pelvisC[1]}>
+              <stop offset="0%"   stopColor="#22d3ee"/>
+              <stop offset="100%" stopColor={ptC.color}/>
+            </linearGradient>
+            {/* v77 — Upper chain gradient (pelvis → ball): ptC at pelvis through taC at arm */}
+            <linearGradient id={`ik-energy-upper-${uid}`} gradientUnits="userSpaceOnUse"
+              x1={K.pelvisC[0]} y1={K.pelvisC[1]} x2={K.ball[0]} y2={K.ball[1]}>
+              <stop offset="0%"   stopColor={ptC.color}/>
+              <stop offset="40%"  stopColor={taC.color}/>
               <stop offset="85%"  stopColor={taC.color}/>
               <stop offset="100%" stopColor={taC.dark}/>
             </linearGradient>
@@ -1167,19 +1203,50 @@
           </g>
 
           {/* === FULL KINETIC CHAIN ENERGY PATH === */}
-          {/* Foot → knee → pelvis → trunk → shoulder → elbow → wrist → ball */}
+          {/* v77 — Both legs + upper chain */}
+          {/*   Pivot leg (back/push-off): rAnkle → rKnee → pelvis */}
+          {/*   Stride leg (front/landing): lAnkle → lKnee → pelvis */}
+          {/*   Upper chain: pelvis → trunk → shoulder → elbow → wrist → ball */}
           {energy && (
             <>
-              {/* Underlay shadow */}
-              <path d={energyPath} stroke="#0f1a30" strokeOpacity="0.55" strokeWidth="14"
+              {/* Underlay shadows for all three paths */}
+              <path d={energyPathPivotLeg} stroke="#0f1a30" strokeOpacity="0.55" strokeWidth="14"
                     fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              {/* Energy gradient stroke */}
-              <path d={energyPath} stroke={`url(#ik-energy-${uid})`} strokeWidth="9"
+              <path d={energyPathStrideLeg} stroke="#0f1a30" strokeOpacity="0.55" strokeWidth="14"
+                    fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d={energyPathUpperChain} stroke="#0f1a30" strokeOpacity="0.55" strokeWidth="14"
+                    fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+
+              {/* Pivot leg energy stream (back foot pushes off → drives pelvis rotation) */}
+              <path d={energyPathPivotLeg} stroke={`url(#ik-energy-pivot-${uid})`} strokeWidth="9"
                     fill="none" strokeLinecap="round" strokeLinejoin="round"
                     strokeDasharray="20 12" opacity="0.95"
                     filter={`url(#ik-glow-${uid})`}>
                 <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
               </path>
+
+              {/* Stride leg energy stream (front foot blocks → pelvis decelerates → trunk accelerates) */}
+              <path d={energyPathStrideLeg} stroke={`url(#ik-energy-stride-${uid})`} strokeWidth="9"
+                    fill="none" strokeLinecap="round" strokeLinejoin="round"
+                    strokeDasharray="20 12" opacity="0.95"
+                    filter={`url(#ik-glow-${uid})`}>
+                <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
+              </path>
+
+              {/* Upper chain energy stream (pelvis → trunk → arm → ball) */}
+              <path d={energyPathUpperChain} stroke={`url(#ik-energy-upper-${uid})`} strokeWidth="9"
+                    fill="none" strokeLinecap="round" strokeLinejoin="round"
+                    strokeDasharray="20 12" opacity="0.95"
+                    filter={`url(#ik-glow-${uid})`}>
+                <animate attributeName="stroke-dashoffset" from="32" to="0" dur="1.4s" repeatCount="indefinite"/>
+              </path>
+
+              {/* Pelvis convergence point — visualize where both legs' energy combines */}
+              <circle cx={K.pelvisC[0]} cy={K.pelvisC[1]} r="11" fill={ptC.color} opacity="0.4"
+                      filter={`url(#ik-glow-${uid})`}>
+                <animate attributeName="r" values="9;13;9" dur="1.4s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.3;0.6;0.3" dur="1.4s" repeatCount="indefinite"/>
+              </circle>
 
               {/* Leak indicators on stages with weak transfer */}
               {ptLeak && (

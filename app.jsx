@@ -123,6 +123,7 @@ const initialPitcher = {
   videoSize: 0,
   videoDuration: 0,
   videoMimeType: '',
+  videoExternalUrl: '',  // v76 — External video hosting URL (YouTube, Vimeo, Google Drive, etc.)
   notes: ''
 };
 
@@ -1024,7 +1025,7 @@ function PitcherInputForm({ onOpenReport } = {}) {
             <div>
               <div className="text-blue-300 text-[10px] tracking-[0.25em] font-semibold mb-1">
                 BBL · BIOMOTION BASEBALL LAB
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v75</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v77</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">투수 정보 입력</h1>
               <div className="text-blue-200/70 text-xs mt-1">
@@ -1166,7 +1167,7 @@ function PitcherInputForm({ onOpenReport } = {}) {
           icon={<IconVideo />}
           title="측정 영상"
           right={
-            videoBlob ? (
+            (videoBlob || pitcher.videoExternalUrl) ? (
               <span className="text-[11px] text-slate-500">
                 리포트에 삽입됩니다
               </span>
@@ -1185,6 +1186,32 @@ function PitcherInputForm({ onOpenReport } = {}) {
           ) : (
             <VideoUploader onSelect={handleVideoUpload} />
           )}
+
+          {/* v76 — External video URL (YouTube, Vimeo, Google Drive, direct mp4 etc.) */}
+          {/* Used when the file is too large for browser → GitHub direct upload, but the coach
+              has uploaded it to YouTube/Drive/etc and just wants to embed by URL.
+              This URL is included in the published JSON, so all viewers see the video. */}
+          <div className="mt-3 pt-3 border-t border-slate-200">
+            <Field label={
+              <span>
+                또는 영상 URL 붙여넣기
+                <span className="ml-1.5 text-[10px] font-normal text-slate-500">(YouTube · Vimeo · Google Drive · 직접 mp4 URL)</span>
+              </span>
+            }>
+              <input
+                type="url"
+                value={pitcher.videoExternalUrl || ''}
+                onChange={(e) => updatePitcher('videoExternalUrl', e.target.value)}
+                placeholder="예: https://youtu.be/abc123 또는 https://drive.google.com/file/d/.../view"
+                className="bbl-input"
+              />
+            </Field>
+            {pitcher.videoExternalUrl && (
+              <div className="mt-2 px-2.5 py-1.5 rounded text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200">
+                ✓ 이 URL은 게시 시 함께 저장되어 모든 사람에게 영상이 표시됩니다 (파일 업로드 불필요).
+              </div>
+            )}
+          </div>
         </Card>
 
         {/* Card 2: 신체 측정 */}

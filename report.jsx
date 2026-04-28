@@ -855,6 +855,66 @@
   // ============================================================
   // Video Player — speed control + frame stepping + muted
   // ============================================================
+  // v76 — Convert any external video URL to its embeddable form
+  // Returns { type: 'iframe' | 'video' | 'unknown', embedUrl, originalUrl }
+  function parseExternalVideoUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    const u = url.trim();
+
+    // YouTube: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/shorts/ID
+    let m = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    if (m) {
+      return { type: 'iframe', embedUrl: `https://www.youtube.com/embed/${m[1]}`, originalUrl: u, host: 'YouTube' };
+    }
+
+    // Vimeo: vimeo.com/ID
+    m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+    if (m) {
+      return { type: 'iframe', embedUrl: `https://player.vimeo.com/video/${m[1]}`, originalUrl: u, host: 'Vimeo' };
+    }
+
+    // Google Drive: drive.google.com/file/d/ID/view
+    m = u.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (m) {
+      return { type: 'iframe', embedUrl: `https://drive.google.com/file/d/${m[1]}/preview`, originalUrl: u, host: 'Google Drive' };
+    }
+
+    // Direct video file (mp4, webm, mov, etc)
+    if (/\.(mp4|webm|mov|m4v|ogg)(\?|$)/i.test(u)) {
+      return { type: 'video', embedUrl: u, originalUrl: u, host: 'Direct video file' };
+    }
+
+    // Unknown — fallback to iframe with original URL
+    return { type: 'iframe', embedUrl: u, originalUrl: u, host: 'External' };
+  }
+
+  // v76 — Component for rendering external video URLs (YouTube, Vimeo, Drive, direct)
+  function ExternalVideoEmbed({ url }) {
+    const parsed = parseExternalVideoUrl(url);
+    if (!parsed) return null;
+    if (parsed.type === 'video') {
+      return <VideoPlayer src={parsed.embedUrl}/>;
+    }
+    // iframe (YouTube, Vimeo, Drive, etc.)
+    return (
+      <div>
+        <div className="rounded-md overflow-hidden" style={{ background: '#000', aspectRatio: '16/9' }}>
+          <iframe
+            src={parsed.embedUrl}
+            className="w-full h-full"
+            style={{ border: 0 }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            title="측정 영상"
+          />
+        </div>
+        <div className="mt-1.5 text-[10px]" style={{ color: '#94a3b8' }}>
+          외부 영상 호스팅 ({parsed.host}) — <a href={parsed.originalUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'underline' }}>원본 링크 열기</a>
+        </div>
+      </div>
+    );
+  }
+
   function VideoPlayer({ src }) {
     const videoRef = useRef(null);
     const [speed, setSpeed] = useState(1);
@@ -2396,58 +2456,74 @@
   async function uploadReportToGithub(payload, { owner, repo, branch }, token) {
     const id = makeReportId(payload.pitcher);
 
-    // v75 — Upload video via GitHub Releases API (raw binary, no size limit unlike Contents/Git Data API)
-    // Releases assets support up to 2GB, no JSON request body limit, and the resulting URL is publicly accessible.
+    // ============================================================
+    // v76 — Smart video handling with three paths:
+    //   PATH 1: External URL (YouTube/Vimeo/Drive) — included in JSON, no upload
+    //   PATH 2: Existing GitHub video — fetch existing JSON, preserve video reference
+    //   PATH 3: New video blob — try to upload (will likely fail due to GitHub limits)
+    // ============================================================
     let videoUploadResult = null;
-    if (payload.video && payload.video.blob) {
+    let videoNote = '';  // Status message for the user
+
+    // --- PATH 1: External URL provided (preferred) ---
+    if (payload.pitcher?.videoExternalUrl) {
+      const url = payload.pitcher.videoExternalUrl.trim();
+      if (url) {
+        payload = {
+          ...payload,
+          video: {
+            externalUrl: url,
+            filename: 'external-video',
+            mimeType: 'external'
+          }
+        };
+        videoNote = '외부 영상 URL';
+        console.log(`[Upload] Using external video URL: ${url}`);
+      }
+    }
+
+    // --- PATH 2: No new external URL, but existing JSON might already have a video ---
+    // Check if a JSON already exists in the repo and has a working video reference.
+    // If yes, preserve it (don't waste effort re-uploading the same video).
+    if (!payload.video && payload.video !== null) {
+      try {
+        const existingApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/reports/${id}.json?ref=${encodeURIComponent(branch)}`;
+        const existingRes = await fetch(existingApiUrl, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.raw+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+          }
+        });
+        if (existingRes.ok) {
+          const existingJson = await existingRes.json();
+          if (existingJson.video && (existingJson.video.releaseUrl || existingJson.video.path || existingJson.video.base64 || existingJson.video.externalUrl)) {
+            // Preserve existing video reference
+            payload = { ...payload, video: existingJson.video };
+            videoNote = '기존 영상 유지';
+            console.log(`[Upload] Preserving existing video reference from ${id}.json`);
+          }
+        }
+      } catch (e) {
+        console.log(`[Upload] No existing JSON to preserve video from (this is fine for new reports):`, e.message);
+      }
+    }
+
+    // --- PATH 3: New blob provided (fallback, may fail due to GitHub limits) ---
+    // Only try this if we don't already have a video reference from PATH 1 or 2,
+    // AND the user actually provided a new blob.
+    if (!payload.video?.externalUrl && !payload.video?.releaseUrl && !payload.video?.path && !payload.video?.base64
+        && payload.video?.blob) {
       const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
       const assetName = `${id}.${videoExt}`;
       try {
-        console.log(`[Upload] Video via Releases API: ${assetName} (${(payload.video.size/1024/1024).toFixed(1)}MB)`);
+        console.log(`[Upload] Attempting video upload via Releases API: ${assetName} (${(payload.video.size/1024/1024).toFixed(1)}MB)`);
         const release = await uploadVideoToReleases(
           payload.video.blob,
           assetName,
           { owner, repo },
           token
         );
-        console.log(`[Upload] Video uploaded:`, release.url);
-        videoUploadResult = release;
-        // Replace embedded blob with URL reference (slim payload)
-        payload = {
-          ...payload,
-          video: {
-            releaseUrl: release.url,        // v75: direct download URL from Releases
-            assetId: release.assetId,
-            filename: payload.video.filename,
-            size: payload.video.size,
-            mimeType: payload.video.mimeType
-            // blob/base64 removed — fetched from releaseUrl at runtime
-          }
-        };
-      } catch (e) {
-        // v75 — Show the actual exception detail with diagnosis
-        const sizeMB = (payload.video.size / 1024 / 1024).toFixed(1);
-        const baseMsg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[v75 진단]\n• v75는 GitHub Releases API를 사용합니다 (2GB까지 가능).\n• 위 에러가 "Releases API [N. ...]" 형태면 Releases API 자체가 실패.\n• 가장 흔한 원인: 토큰 권한 부족 (Contents: write 필요).`;
-        const guideMsg = `\n\n[해결 방법]\n1. GitHub 토큰 권한 확인:\n   • Fine-grained: "Contents: Read and write" + "Metadata: Read-only"\n   • Classic: "repo" 전체 scope\n2. 콘솔(F12)에서 [Upload] 로그 확인.\n\n지금 영상 없이 게시할까요?\n(확인) 영상 없이 게시\n(취소) 중단 — 토큰 점검 후 재시도`;
-        console.warn(baseMsg);
-        const proceed = (typeof confirm !== 'undefined') ? confirm(baseMsg + guideMsg) : true;
-        if (!proceed) {
-          throw new Error('사용자 취소 — 토큰 점검 후 다시 시도하세요');
-        }
-        payload = { ...payload, video: null };
-      }
-    } else if (payload.video && payload.video.base64) {
-      // v75 — Legacy path: payload still has base64 (from older buildPayload)
-      // Convert base64 → Blob and upload via Releases
-      const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
-      const assetName = `${id}.${videoExt}`;
-      try {
-        const byteString = atob(payload.video.base64);
-        const bytes = new Uint8Array(byteString.length);
-        for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-        const blob = new Blob([bytes], { type: payload.video.mimeType || 'video/mp4' });
-        console.log(`[Upload] Video via Releases API (legacy base64 path): ${assetName} (${(blob.size/1024/1024).toFixed(1)}MB)`);
-        const release = await uploadVideoToReleases(blob, assetName, { owner, repo }, token);
         videoUploadResult = release;
         payload = {
           ...payload,
@@ -2459,17 +2535,23 @@
             mimeType: payload.video.mimeType
           }
         };
+        videoNote = '영상 업로드됨';
       } catch (e) {
+        // v76 — Friendlier message: explain the workaround instead of cryptic errors
         const sizeMB = (payload.video.size / 1024 / 1024).toFixed(1);
-        const baseMsg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[v75 진단]\n• v75는 GitHub Releases API를 사용합니다 (2GB까지 가능).\n• 토큰 권한이나 네트워크 문제일 가능성.`;
-        const guideMsg = `\n\n[해결 방법]\n1. GitHub 토큰 권한 확인:\n   • Fine-grained: "Contents: Read and write"\n   • Classic: "repo" 전체 scope\n\n지금 영상 없이 게시할까요?`;
-        console.warn(baseMsg);
-        const proceed = (typeof confirm !== 'undefined') ? confirm(baseMsg + guideMsg) : true;
+        const msg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[해결책 — 영상을 외부 URL로 입력]\n\nGitHub은 브라우저에서 큰 영상 파일 업로드를 차단합니다 (CORS).\n해결 방법:\n\n1. YouTube에 영상 업로드 (비공개 가능) → URL 복사\n   또는 Google Drive에 업로드 → "공유 가능 링크" 복사\n   또는 Vimeo 등 다른 호스팅 사용\n\n2. 분석 페이지에서 "측정 영상" 카드의 새 입력 칸\n   "또는 영상 URL 붙여넣기"에 URL 입력\n\n3. "선수용 링크 생성" 다시 클릭\n   → URL만 게시되어 모든 사람에게 영상 표시됨\n\n지금은 영상 없이 분석 결과만 게시할까요?\n(확인) 영상 없이 게시\n(취소) 중단 — 외부 URL 준비 후 재시도`;
+        console.warn(msg);
+        const proceed = (typeof confirm !== 'undefined') ? confirm(msg) : true;
         if (!proceed) {
-          throw new Error('사용자 취소 — 토큰 점검 후 다시 시도하세요');
+          throw new Error('사용자 취소 — 외부 URL 입력 후 다시 시도하세요');
         }
         payload = { ...payload, video: null };
+        videoNote = '영상 제외';
       }
+    } else if (payload.video?.blob) {
+      // Has both blob AND existing reference — strip blob, keep reference
+      const { blob, ...videoWithoutBlob } = payload.video;
+      payload = { ...payload, video: videoWithoutBlob };
     }
 
     // Now upload the JSON (much smaller without embedded video)
@@ -2864,6 +2946,14 @@
       const v = sharedPayload?.video;
       if (!v) return;
 
+      // v76 — External URL (YouTube, Vimeo, Google Drive, direct mp4)
+      // Highest priority: if coach uploaded a URL, use it directly without fetch
+      if (v.externalUrl) {
+        // No fetch needed — the URL will be embedded in VideoPlayer directly
+        // We set videoBlob to a special marker so the player knows to use externalUrl
+        return;
+      }
+
       // v75 — Preferred format: video at GitHub Releases URL (raw binary, no size limit)
       if (v.releaseUrl) {
         (async () => {
@@ -3182,7 +3272,7 @@
             <div>
               <div className="text-blue-300 text-[10.5px] tracking-[0.25em] font-bold mb-1">
                 BBL · PITCHER REPORT
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v75</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v77</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">{pitcher.name || '—'}</h1>
               <div className="text-blue-200/80 text-[12px] mt-1.5 flex items-center gap-3">
@@ -3404,61 +3494,98 @@
           </Section>
 
           <Section n={2} title="측정 영상" className="section-baseline" subtitle={armSlotType ? `arm slot: ${armSlotType}` : ''}>
-            {videoUrl ? (
-              <div>
-                <VideoPlayer src={videoUrl}/>
-                {/* v66 — Video controls: shown only in edit mode (not shared) */}
-                {!isShared && (
-                  <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
-                    <label className="cursor-pointer px-2.5 py-1 rounded border" style={{
-                      borderColor: '#1e2a47', color: '#cbd5e1', background: '#0f1729'
-                    }}>
-                      영상 교체
-                      <input type="file" accept="video/*" className="hidden"
-                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
-                    </label>
-                    <button onClick={removeVideoFromReport} className="px-2.5 py-1 rounded border" style={{
-                      borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.05)'
-                    }}>영상 제거</button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              !isShared ? (
-                /* Edit mode: show upload UI */
-                <label className="cursor-pointer block">
-                  <input type="file" accept="video/*" className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
-                  <div className="border-2 border-dashed rounded-lg py-10 px-4 text-center transition" style={{
-                    borderColor: '#334155', background: 'rgba(15, 23, 42, 0.4)'
-                  }}>
-                    <div className="flex flex-col items-center" style={{ color: '#94a3b8' }}>
-                      <div className="w-12 h-12 rounded-full flex items-center justify-center mb-3" style={{
-                        background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa'
+            {(() => {
+              // v76 — Determine which video source to show, in priority order:
+              //   1. External URL (works for all viewers, no upload needed)
+              //   2. videoUrl from videoBlob (file upload, may be local-only or fetched from Releases)
+              const externalUrl = isShared
+                ? sharedPayload?.video?.externalUrl
+                : pitcher?.videoExternalUrl;
+
+              if (externalUrl) {
+                return (
+                  <div>
+                    <ExternalVideoEmbed url={externalUrl}/>
+                    {!isShared && (
+                      <div className="mt-2 px-2.5 py-1.5 rounded text-[10.5px]" style={{
+                        background: 'rgba(20,184,166,0.06)', border: '1px solid rgba(20,184,166,0.25)', color: '#5eead4'
                       }}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polygon points="23 7 16 12 23 17 23 7"/>
-                          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                        </svg>
+                        ✓ 외부 영상 URL이 사용됩니다. 선수용 링크에도 이 URL이 포함되어 모든 사람에게 표시됩니다.
                       </div>
-                      <div className="text-sm font-semibold" style={{ color: '#cbd5e1' }}>
-                        영상 파일을 클릭하거나 드래그하여 업로드
+                    )}
+                  </div>
+                );
+              }
+
+              if (videoUrl) {
+                return (
+                  <div>
+                    <VideoPlayer src={videoUrl}/>
+                    {/* v66 — Video controls: shown only in edit mode (not shared) */}
+                    {!isShared && (
+                      <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+                        <label className="cursor-pointer px-2.5 py-1 rounded border" style={{
+                          borderColor: '#1e2a47', color: '#cbd5e1', background: '#0f1729'
+                        }}>
+                          영상 교체
+                          <input type="file" accept="video/*" className="hidden"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
+                        </label>
+                        <button onClick={removeVideoFromReport} className="px-2.5 py-1 rounded border" style={{
+                          borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.05)'
+                        }}>영상 제거</button>
                       </div>
-                      <div className="text-[11px] mt-1.5" style={{ color: '#94a3b8' }}>
-                        mp4 · mov · webm 등 · 1개 영상 (이 리포트의 측정 영상)
+                    )}
+                    {!isShared && (
+                      <div className="mt-2 px-2.5 py-1.5 rounded text-[10.5px]" style={{
+                        background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', color: '#fbbf24', lineHeight: 1.5
+                      }}>
+                        ⚠ 영상 파일이 클 경우 (5MB+) "선수용 링크 생성"이 실패할 수 있습니다.
+                        대신 입력 페이지의 <b>"또는 영상 URL 붙여넣기"</b> 칸에 YouTube/Drive URL을 입력하면 안정적입니다.
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              if (!isShared) {
+                return (
+                  <label className="cursor-pointer block">
+                    <input type="file" accept="video/*" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
+                    <div className="border-2 border-dashed rounded-lg py-10 px-4 text-center transition" style={{
+                      borderColor: '#334155', background: 'rgba(15, 23, 42, 0.4)'
+                    }}>
+                      <div className="flex flex-col items-center" style={{ color: '#94a3b8' }}>
+                        <div className="w-12 h-12 rounded-full flex items-center justify-center mb-3" style={{
+                          background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa'
+                        }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polygon points="23 7 16 12 23 17 23 7"/>
+                            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                          </svg>
+                        </div>
+                        <div className="text-sm font-semibold" style={{ color: '#cbd5e1' }}>
+                          영상 파일을 클릭하거나 드래그하여 업로드
+                        </div>
+                        <div className="text-[11px] mt-1.5" style={{ color: '#94a3b8' }}>
+                          mp4 · mov · webm 등 · 1개 영상 (또는 입력 페이지에서 외부 URL 입력)
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </label>
-              ) : (
-                /* Shared mode (player URL): no video means coach didn't upload one. Show simple message. */
+                  </label>
+                );
+              }
+
+              // Shared mode, no video at all
+              return (
                 <div className="px-3 py-4 rounded text-center text-[11.5px]" style={{
                   background: 'rgba(15, 23, 42, 0.4)', border: '1px solid #1e2a47', color: '#94a3b8'
                 }}>
                   이 리포트에 측정 영상이 포함되어 있지 않습니다.
                 </div>
-              )
-            )}
+              );
+            })()}
           </Section>
 
           <PartBanner letter="B" title="구속 — 파워와 메커닉스" subtitle="공의 빠르기를 결정하는 핵심 요인 — 타이밍, 회전 속도, 가동범위, 그리고 에너지 흐름"/>
