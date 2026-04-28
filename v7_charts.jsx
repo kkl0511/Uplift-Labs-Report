@@ -16,8 +16,8 @@
   // value lo~hi (mid zone)   → middle gray band
   // value < lo (poor zone)   → inner red band
   // ============================================================
-  function RadarChart({ data, size = 420 }) {
-    const pad = 70;
+  function RadarChart({ data, size = 480 }) {
+    const pad = 90;
     const cx = size / 2, cy = size / 2;
     const rMax = size / 2 - pad;
     const n = data.length;
@@ -32,6 +32,30 @@
       return Math.min(1.12, 0.90 + over * 0.35);
     };
 
+    // v70 — Color-code each axis dot by score (grade)
+    const dotColor = (v) => {
+      if (v == null || isNaN(v)) return '#64748b';
+      if (v >= 80) return '#10b981';   // A — green
+      if (v >= 65) return '#84cc16';   // B+ — lime
+      if (v >= 50) return '#facc15';   // B — yellow
+      if (v >= 35) return '#f59e0b';   // C — amber
+      return '#ef4444';                 // D — red
+    };
+
+    // v70 — Polygon color shifts based on average score (overall mechanic quality)
+    const validValues = data.map(d => d.value).filter(v => v != null && !isNaN(v));
+    const avgScore = validValues.length > 0
+      ? validValues.reduce((a, b) => a + b, 0) / validValues.length
+      : 50;
+    const polygonStroke = avgScore >= 70 ? '#10b981'
+                       : avgScore >= 55 ? '#3b82f6'
+                       : avgScore >= 40 ? '#f59e0b'
+                       : '#ef4444';
+    const polygonFillStart = avgScore >= 70 ? '#10b981'
+                          : avgScore >= 55 ? '#60a5fa'
+                          : avgScore >= 40 ? '#fbbf24'
+                          : '#f87171';
+
     const pt = (i, r) => {
       const ang = -Math.PI / 2 + (i / n) * Math.PI * 2;
       return [cx + Math.cos(ang) * r * rMax, cy + Math.sin(ang) * r * rMax];
@@ -45,48 +69,57 @@
       <svg className="chart" viewBox={`0 0 ${size} ${size}`} style={{ maxWidth: size, width: '100%' }}>
         <defs>
           <radialGradient id={`radarFill-${uid}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.35"/>
-            <stop offset="100%" stopColor="#2563EB" stopOpacity="0.25"/>
+            <stop offset="0%" stopColor={polygonFillStart} stopOpacity="0.35"/>
+            <stop offset="100%" stopColor={polygonStroke} stopOpacity="0.15"/>
           </radialGradient>
         </defs>
         {/* rings */}
         {ringVals.map((r, i) => (
           <circle key={i} cx={cx} cy={cy} r={r * rMax}
             fill={r === 0.55 ? "rgba(148,163,184,0.04)" : "none"}
-            stroke={r === 0.55 ? "rgba(239,68,68,0.28)" : r === 0.9 ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.06)"}
-            strokeDasharray={r === 0.55 || r === 0.9 ? "4 4" : "0"}
-            strokeWidth={1}/>
+            stroke={r === 0.55 ? "rgba(239,68,68,0.4)" : r === 0.9 ? "rgba(34,197,94,0.35)" : "rgba(255,255,255,0.08)"}
+            strokeDasharray={r === 0.55 || r === 0.9 ? "5 4" : "0"}
+            strokeWidth={r === 0.55 || r === 0.9 ? 1.5 : 1}/>
         ))}
         {/* axes */}
         {axisLines.map(([x, y], i) => (
-          <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(255,255,255,0.08)"/>
+          <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(255,255,255,0.1)"/>
         ))}
         {/* polygon */}
         <polygon points={polyPoints}
           fill={`url(#radarFill-${uid})`}
-          stroke="#2563EB" strokeWidth="2"
-          style={{ filter: 'drop-shadow(0 0 12px rgba(37,99,235,0.4))' }}/>
-        {/* dots */}
+          stroke={polygonStroke} strokeWidth="2.5"
+          style={{ filter: `drop-shadow(0 0 14px ${polygonStroke}66)` }}/>
+        {/* dots — color-coded by grade */}
         {data.map((d, i) => {
           const [x, y] = pt(i, norm(d));
+          const color = dotColor(d.value);
           return d.value != null ? (
-            <circle key={i} cx={x} cy={y} r="5" fill="#60a5fa" stroke="#08080c" strokeWidth="2"/>
+            <g key={i}>
+              <circle cx={x} cy={y} r="7" fill={color} stroke="#08080c" strokeWidth="2.5"/>
+              <circle cx={x} cy={y} r="3" fill="rgba(255,255,255,0.7)"/>
+            </g>
           ) : null;
         })}
-        {/* axis labels */}
+        {/* axis labels — bigger, score in matching grade color */}
         {data.map((d, i) => {
-          const [x, y] = pt(i, 1.22);
+          const [x, y] = pt(i, 1.28);
+          const scoreColor = dotColor(d.value);
+          // v70 — Top label slight offset so 12 o'clock label doesn't clash with ring labels
+          const ang = -Math.PI / 2 + (i / n) * Math.PI * 2;
+          const isTop = Math.abs(ang + Math.PI / 2) < 0.1;
+          const labelYOffset = isTop ? -10 : -6;
           return (
             <g key={i}>
-              <text x={x} y={y - 6} textAnchor="middle" fontSize="12" fontWeight="700" fill="#e2e8f0" fontFamily="Pretendard, system-ui">{d.label}</text>
-              <text x={x} y={y + 8} textAnchor="middle" fontSize="9" fill="#94a3b8" fontFamily="Inter">{d.sub}</text>
-              <text x={x} y={y + 24} textAnchor="middle" fontSize="13" fontWeight="700" fill="#60a5fa" fontFamily="Inter">{d.display}</text>
+              <text x={x} y={y + labelYOffset} textAnchor="middle" fontSize="13" fontWeight="700" fill="#f1f5f9" fontFamily="Pretendard, system-ui">{d.label}</text>
+              <text x={x} y={y + labelYOffset + 14} textAnchor="middle" fontSize="10" fill="#94a3b8" fontFamily="Inter">{d.sub}</text>
+              <text x={x} y={y + labelYOffset + 32} textAnchor="middle" fontSize="16" fontWeight="800" fill={scoreColor} fontFamily="Inter">{d.display}</text>
             </g>
           );
         })}
-        {/* band labels */}
-        <text x={cx} y={cy - 0.55 * rMax - 4} textAnchor="middle" fill="rgba(239,68,68,0.6)" fontSize="9" fontFamily="Inter">기준 미만</text>
-        <text x={cx} y={cy - 0.9 * rMax - 4} textAnchor="middle" fill="rgba(34,197,94,0.6)" fontSize="9" fontFamily="Inter">기준 상위</text>
+        {/* band labels — repositioned to right side to avoid clashing with top axis label */}
+        <text x={cx + 0.55 * rMax + 6} y={cy + 4} textAnchor="start" fill="rgba(239,68,68,0.7)" fontSize="9.5" fontWeight="600" fontFamily="Inter">기준 미만</text>
+        <text x={cx + 0.9 * rMax + 6} y={cy + 4} textAnchor="start" fill="rgba(34,197,94,0.7)" fontSize="9.5" fontWeight="600" fontFamily="Inter">기준 상위</text>
       </svg>
     );
   }
