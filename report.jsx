@@ -2273,7 +2273,7 @@
     );
   }
 
-  function ShareReportButton({ pitcher, analysis, benchAnalyses }) {
+  function ShareReportButton({ pitcher, analysis, benchAnalyses, videoBlob, trials }) {
     const [showSetup, setShowSetup] = useState(false);
     const [busy, setBusy] = useState(false);
 
@@ -2285,18 +2285,71 @@
       resolvedPitcher: b.resolvedPitcher
     });
 
-    const buildPayload = () => ({
-      v: 1,
-      pitcher,
-      analysis,
-      benchAnalyses: (benchAnalyses || []).map(stripBenchTrials),
-      createdAt: new Date().toISOString()
-    });
+    // v66 — Build payload now includes video (base64) and trials (with raw CSV data)
+    //   - video: so the player video shows on the player URL (#/r/...)
+    //   - trials with .data: so v60 client-side recompute fills in any
+    //     newly-added variables in future versions without re-publishing
+    const buildPayload = async () => {
+      // Encode video to base64 if present
+      let videoData = null;
+      if (videoBlob && (videoBlob instanceof Blob || videoBlob instanceof File)) {
+        try {
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result;
+              const idx = result.indexOf(',');
+              resolve(idx >= 0 ? result.slice(idx + 1) : result);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(videoBlob);
+          });
+          videoData = {
+            filename: videoBlob.name || pitcher?.videoFilename || 'video.mp4',
+            size: videoBlob.size,
+            mimeType: videoBlob.type || pitcher?.videoMimeType || 'video/mp4',
+            base64
+          };
+        } catch (e) {
+          console.warn('Failed to encode video for share, continuing without it:', e);
+        }
+      }
+      // Include trials with raw .data so future client-side recompute can fill new variables.
+      // Strip per-trial videoBlob (we keep only the main video) and other heavy non-essential refs.
+      const trialsForShare = (trials || []).map(t => ({
+        id: t.id,
+        label: t.label,
+        velocity: t.velocity,
+        velocityKmh: t.velocityKmh,
+        velocityMph: t.velocityMph,
+        excludeFromAnalysis: t.excludeFromAnalysis,
+        preview: t.preview,
+        // Include raw CSV data — this is the key field that enables v60 auto-recompute
+        data: t.data
+      }));
+      return {
+        v: 2,                  // schema version (bumped: now includes video + trials)
+        pitcher,
+        video: videoData,      // ← v66: includes uploaded video
+        trials: trialsForShare,// ← v66: includes raw CSV for auto-recompute
+        analysis,
+        benchAnalyses: (benchAnalyses || []).map(stripBenchTrials),
+        createdAt: new Date().toISOString()
+      };
+    };
 
     const generateAndShare = async (token, cfg) => {
       setBusy(true);
       try {
-        const payload = buildPayload();
+        const payload = await buildPayload();
+        // v66 — Warn if final JSON is too large (GitHub: 100MB hard limit, ~50MB practical for fast loading)
+        const estSize = JSON.stringify(payload).length;
+        if (estSize > 80 * 1024 * 1024) {
+          if (!confirm(`업로드할 JSON 크기가 ${(estSize/1024/1024).toFixed(1)}MB입니다 (영상 포함).\nGitHub 한도는 100MB이며, 50MB 넘으면 로딩이 느려집니다.\n\n계속 진행하시려면 확인을 누르세요. 영상을 짧고 작게(720p, 30초 이내) 압축하면 좋습니다.`)) {
+            setBusy(false);
+            return;
+          }
+        }
         const { id, isUpdate } = await uploadReportToGithub(payload, cfg, token);
         const url = `${window.location.origin}${window.location.pathname}#/r/${id}`;
         try { await navigator.clipboard.writeText(url); } catch (e) {}
@@ -2797,6 +2850,8 @@
                   pitcher={pitcher}
                   analysis={analysis}
                   benchAnalyses={benchAnalyses}
+                  videoBlob={videoBlob}
+                  trials={trials}
                 />
               )}
               <button onClick={() => window.print()} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 text-[12px] font-semibold rounded-md flex items-center gap-1.5 transition">
@@ -2969,38 +3024,25 @@
             {videoUrl ? (
               <div>
                 <VideoPlayer src={videoUrl}/>
-                {/* v60 — Video controls below player */}
-                <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
-                  <label className="cursor-pointer px-2.5 py-1 rounded border" style={{
-                    borderColor: '#1e2a47', color: '#cbd5e1', background: '#0f1729'
-                  }}>
-                    영상 교체
-                    <input type="file" accept="video/*" className="hidden"
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
-                  </label>
-                  <button onClick={removeVideoFromReport} className="px-2.5 py-1 rounded border" style={{
-                    borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.05)'
-                  }}>영상 제거</button>
-                  {isShared && (
-                    <button onClick={reDownloadJsonWithVideo} disabled={downloadingJson}
-                      className="px-2.5 py-1 rounded border" style={{
-                        borderColor: 'rgba(20,184,166,0.4)', color: '#5eead4', background: 'rgba(20,184,166,0.06)',
-                        opacity: downloadingJson ? 0.5 : 1, cursor: downloadingJson ? 'wait' : 'pointer'
-                      }}>
-                      {downloadingJson ? '생성 중...' : '📥 영상 포함 JSON 다운로드 (GitHub 업로드용)'}
-                    </button>
-                  )}
-                </div>
-                {isShared && (
-                  <div className="mt-2 text-[10.5px] px-2.5 py-1.5 rounded" style={{
-                    background: 'rgba(20,184,166,0.04)', color: '#94a3b8', lineHeight: 1.5
-                  }}>
-                    💡 영상은 현재 브라우저에만 임시 저장됩니다. 다른 사람도 영상을 보게 하려면 위 "영상 포함 JSON 다운로드"로 받아서 GitHub의 reports 폴더에 덮어쓰기 업로드하세요.
+                {/* v66 — Video controls: shown only in edit mode (not shared) */}
+                {!isShared && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+                    <label className="cursor-pointer px-2.5 py-1 rounded border" style={{
+                      borderColor: '#1e2a47', color: '#cbd5e1', background: '#0f1729'
+                    }}>
+                      영상 교체
+                      <input type="file" accept="video/*" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
+                    </label>
+                    <button onClick={removeVideoFromReport} className="px-2.5 py-1 rounded border" style={{
+                      borderColor: 'rgba(239,68,68,0.4)', color: '#fca5a5', background: 'rgba(239,68,68,0.05)'
+                    }}>영상 제거</button>
                   </div>
                 )}
               </div>
             ) : (
-              <div>
+              !isShared ? (
+                /* Edit mode: show upload UI */
                 <label className="cursor-pointer block">
                   <input type="file" accept="video/*" className="hidden"
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) handleVideoUploadInReport(f); e.target.value = ''; }}/>
@@ -3025,14 +3067,14 @@
                     </div>
                   </div>
                 </label>
-                {isShared && (
-                  <div className="mt-2 text-[10.5px] px-2.5 py-1.5 rounded" style={{
-                    background: 'rgba(20,184,166,0.04)', color: '#94a3b8', lineHeight: 1.5
-                  }}>
-                    💡 업로드한 영상은 일단 이 브라우저에만 표시됩니다. 영상이 다른 사람의 화면에도 보이게 하려면 업로드 후 나타날 "JSON 다운로드" 버튼으로 새 JSON을 받아서 GitHub의 reports 폴더에 덮어쓰기 업로드하세요.
-                  </div>
-                )}
-              </div>
+              ) : (
+                /* Shared mode (player URL): no video means coach didn't upload one. Show simple message. */
+                <div className="px-3 py-4 rounded text-center text-[11.5px]" style={{
+                  background: 'rgba(15, 23, 42, 0.4)', border: '1px solid #1e2a47', color: '#94a3b8'
+                }}>
+                  이 리포트에 측정 영상이 포함되어 있지 않습니다.
+                </div>
+              )
             )}
           </Section>
 
