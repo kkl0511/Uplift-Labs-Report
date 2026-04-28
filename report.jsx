@@ -2454,8 +2454,39 @@
 
     // Run analysis (subject) — exclude trials marked for exclusion in input page.
     // In shared mode, use the pre-baked analysis from the payload (no CSV access needed).
+    // v60: If shared payload has trials with raw CSV data AND the baked analysis
+    //      is missing v54+ variables (peakCogVel, leadKneeExtAtBR, etc.), recompute
+    //      on the fly so old published JSONs benefit from new variables automatically.
     const analysis = useMemo(() => {
-      if (isShared) return sharedAnalysis;
+      if (isShared) {
+        // Check if shared analysis is missing v54+ variables
+        const missingNewVars = sharedAnalysis &&
+          (!sharedAnalysis.summary?.peakCogVel?.mean &&
+           !sharedAnalysis.summary?.cogDecel?.mean &&
+           !sharedAnalysis.summary?.leadKneeExtAtBR?.mean);
+        // Check if raw trial CSV data is available for re-analysis
+        const sharedTrials = sharedPayload?.trials || [];
+        const trialsWithData = sharedTrials.filter(t => t && t.data && Array.isArray(t.data) && t.data.length > 0);
+        if (missingNewVars && trialsWithData.length > 0 && pitcher) {
+          // Re-run analysis with current v60 logic to fill in v54+ variables
+          try {
+            const includedTrials = trialsWithData.filter(t => !t.excludeFromAnalysis);
+            if (includedTrials.length > 0) {
+              const fresh = BBLAnalysis.analyze({
+                pitcher,
+                trials: includedTrials,
+                allTrials: trialsWithData
+              });
+              // Mark as recomputed for UI feedback
+              fresh._recomputed = true;
+              return fresh;
+            }
+          } catch (e) {
+            console.warn('Shared mode re-analysis failed, falling back to baked analysis:', e);
+          }
+        }
+        return sharedAnalysis;
+      }
       if (!pitcher || !trials.length) return null;
       const includedTrials = trials.filter(t => !t.excludeFromAnalysis);
       if (includedTrials.length === 0) return null;
@@ -2464,7 +2495,7 @@
       // the biomechanics-quality-controlled subset.
       const allWithData = trials.filter(t => t.data && t.data.length);
       return BBLAnalysis.analyze({ pitcher, trials: includedTrials, allTrials: allWithData });
-    }, [isShared, sharedAnalysis, pitcher, trials]);
+    }, [isShared, sharedAnalysis, sharedPayload, pitcher, trials]);
 
     // Count excluded trials for display
     const excludedTrialCount = useMemo(() => {
@@ -2750,6 +2781,18 @@
             </div>
           )}
 
+          {/* v60 — Notify when shared analysis was recomputed client-side */}
+          {analysis?._recomputed && (
+            <div className="mb-3 px-3 py-2 rounded text-[11px]" style={{
+              background: 'rgba(20, 184, 166, 0.08)', border: '1px solid rgba(20, 184, 166, 0.3)', color: '#5eead4'
+            }}>
+              <span style={{ fontWeight: 700 }}>✨ 최신 분석 적용됨</span>
+              <span style={{ color: '#cbd5e1', marginLeft: 6, lineHeight: 1.5 }}>
+                — 이 리포트는 v54 이전에 게시되었지만, 원본 측정 데이터가 포함되어 있어 클라이언트에서 자동 재분석했습니다. CoG, 앞다리 신전, Counter Rotation 등 신규 변인이 모두 반영됩니다.
+              </span>
+            </div>
+          )}
+
           <PartBanner letter="A" title="측정 정보" subtitle="이 분석의 출발점 — 선수 정보와 투구 영상"/>
           <Section n={1} title="신체 & 구속" className="section-baseline">
             <BioVelocityPanel pitcher={pitcher} summary={summary} perTrial={perTrialStats}/>
@@ -2950,6 +2993,24 @@
                 decimals={2}
                 description="마운드에서 몸 전체를 얼마나 빠르게 이동시키는가"/>
             </DrivelineModelGroup>
+
+            {/* v59 — Warn if v54+ variables are missing (old published JSON) */}
+            {(summary.peakCogVel?.mean == null || summary.cogDecel?.mean == null ||
+              summary.leadKneeExtAtBR?.mean == null || summary.peakTorsoCounterRot?.mean == null) && (
+              <div className="mb-3 px-3 py-2.5 rounded text-[11.5px]" style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#fecaca'
+              }}>
+                <div className="font-bold mb-1" style={{ color: '#f87171' }}>⚠ 일부 신규 변인이 비어 있습니다</div>
+                <div style={{ lineHeight: 1.5 }}>
+                  이 리포트는 v54 이전 분석 결과로 게시되어 있어 다음 변인이 누락되어 있습니다:
+                  {summary.peakCogVel?.mean == null && ' CoG 최고 속도'}
+                  {summary.cogDecel?.mean == null && ' · CoG 감속'}
+                  {summary.leadKneeExtAtBR?.mean == null && ' · 앞다리 신전'}
+                  {summary.peakTorsoCounterRot?.mean == null && ' · Torso Counter Rotation'}
+                  . <b>분석 페이지에서 데이터를 다시 분석하고 "선수용 링크 생성"으로 게시</b>하면 모든 변인이 채워진 완전한 리포트를 볼 수 있습니다.
+                </div>
+              </div>
+            )}
 
             <InfoBox items={[
               {
@@ -3830,10 +3891,13 @@
                       detail={(() => {
                         const parts = [];
                         if (summary.velocity?.mean != null) parts.push(`평균 ${summary.velocity.mean.toFixed(1)} km/h`);
-                        if (summary.peakArmVel?.mean != null) parts.push(`팔 회전 ${summary.peakArmVel.mean.toFixed(0)}°/s`);
+                        if (summary.peakArmVel?.mean != null) parts.push(`팔 ${summary.peakArmVel.mean.toFixed(0)}°/s`);
                         if (summary.peakTrunkVel?.mean != null) parts.push(`몸통 ${summary.peakTrunkVel.mean.toFixed(0)}°/s`);
-                        if (energy?.leakRate != null) parts.push(`누수율 ${energy.leakRate.toFixed(1)}%`);
-                        return parts.length > 0 ? parts.join(' · ') : '데이터 없음 — 재분석 필요';
+                        if (summary.peakPelvisVel?.mean != null) parts.push(`골반 ${summary.peakPelvisVel.mean.toFixed(0)}°/s`);
+                        if (energy?.leakRate != null) parts.push(`누수 ${energy.leakRate.toFixed(1)}%`);
+                        if (parts.length > 0) return parts.join(' · ');
+                        if (velocityScore == null) return '⚠ 점수 산출 불가 — 분석 페이지에서 재분석 후 게시 필요';
+                        return `점수: ${velocityScore.toFixed(1)}/100 (세부 변인 데이터 누락)`;
                       })()}/>
                     <ScoreCard
                       kind="command"
@@ -3872,43 +3936,60 @@
                   {(() => {
                     const velWeaknesses = evaluation.improvements.filter(s => s.kind === 'velocity');
                     const cmdWeaknesses = evaluation.improvements.filter(s => s.kind === 'command');
+                    // v59 — Detect if data is from old version (missing v54+ variables)
+                    const hasNewVars = summary.peakCogVel?.mean != null || summary.leadKneeExtAtBR?.mean != null;
                     return (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                          <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#fbbf24' }}>
-                            <IconAlert size={11}/> 구속 관련 약점 ({velWeaknesses.length})
+                      <>
+                        {!hasNewVars && (
+                          <div className="mb-3 px-3 py-2 rounded text-[10.5px]" style={{
+                            background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5'
+                          }}>
+                            ⚠ 이 리포트는 v54 이전 데이터로 게시되어 약점 검출이 일부 변인(CoG, 앞다리 신전, Counter Rotation 등)을 평가하지 못합니다. 분석 페이지에서 재분석 후 게시하면 더 정확한 약점 진단이 가능합니다.
                           </div>
-                          {velWeaknesses.length === 0 ? (
-                            <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>구속 관련 약점 없음 — 모든 핵심 변인이 엘리트 범위 내</div>
-                          ) : (
-                            <ul className="space-y-2">
-                              {velWeaknesses.map((s, i) => (
-                                <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
-                                  <span className="font-semibold" style={{ color: '#fbbf24' }}>· {s.title}</span>
-                                  <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                        <div>
-                          <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#f472b6' }}>
-                            <IconAlert size={11}/> 제구 관련 약점 ({cmdWeaknesses.length})
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#fbbf24' }}>
+                              <IconAlert size={11}/> 구속 관련 약점 ({velWeaknesses.length})
+                            </div>
+                            {velWeaknesses.length === 0 ? (
+                              <div className="text-[11.5px] italic" style={{ color: '#94a3b8', lineHeight: 1.5 }}>
+                                {hasNewVars
+                                  ? '구속 관련 약점이 검출되지 않았습니다. 모든 핵심 변인이 양호 범위 내에 있습니다.'
+                                  : '⚠ 데이터 부족으로 검출 불가. 재분석 권장.'}
+                              </div>
+                            ) : (
+                              <ul className="space-y-2">
+                                {velWeaknesses.map((s, i) => (
+                                  <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                                    <span className="font-semibold" style={{ color: '#fbbf24' }}>· {s.title}</span>
+                                    <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
-                          {cmdWeaknesses.length === 0 ? (
-                            <div className="text-[11.5px] italic" style={{ color: '#94a3b8' }}>제구 관련 약점 없음 — 시기 간 변동이 안정적</div>
-                          ) : (
-                            <ul className="space-y-2">
-                              {cmdWeaknesses.map((s, i) => (
-                                <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
-                                  <span className="font-semibold" style={{ color: '#f472b6' }}>· {s.title}</span>
-                                  <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
+                          <div>
+                            <div className="text-[10.5px] font-bold tracking-wide uppercase mb-2 flex items-center gap-1" style={{ color: '#f472b6' }}>
+                              <IconAlert size={11}/> 제구 관련 약점 ({cmdWeaknesses.length})
+                            </div>
+                            {cmdWeaknesses.length === 0 ? (
+                              <div className="text-[11.5px] italic" style={{ color: '#94a3b8', lineHeight: 1.5 }}>
+                                제구 관련 약점이 검출되지 않았습니다. 모든 일관성 변인이 양호 범위 내에 있습니다.
+                              </div>
+                            ) : (
+                              <ul className="space-y-2">
+                                {cmdWeaknesses.map((s, i) => (
+                                  <li key={i} className="text-[12.5px] leading-relaxed" style={{ color: '#e2e8f0' }}>
+                                    <span className="font-semibold" style={{ color: '#f472b6' }}>· {s.title}</span>
+                                    <div className="text-[11px] ml-3" style={{ color: '#94a3b8' }}>{s.detail}</div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      </>
                     );
                   })()}
                 </>

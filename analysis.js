@@ -1556,6 +1556,10 @@
 
     if (summary.peakArmVel?.mean < ELITE.peakArm.good)
       improvements.push({ kind: 'velocity', title: '팔 가속 능력 부족', detail: `peak arm ω ${summary.peakArmVel.mean.toFixed(0)} °/s (엘리트 ${ELITE.peakArm.elite}+)` });
+    if (summary.peakTrunkVel?.mean != null && summary.peakTrunkVel.mean < 900)
+      improvements.push({ kind: 'velocity', title: '몸통 회전 속도 부족', detail: `${summary.peakTrunkVel.mean.toFixed(0)}°/s (엘리트 969+, 가중치 1.0 — 가장 중요)` });
+    if (summary.peakPelvisVel?.mean != null && summary.peakPelvisVel.mean < 550)
+      improvements.push({ kind: 'velocity', title: '골반 회전 속도 부족', detail: `${summary.peakPelvisVel.mean.toFixed(0)}°/s (엘리트 596+)` });
     if (summary.etiPT?.mean < ELITE.etiPT.mid)
       improvements.push({ kind: 'velocity', title: '골반→몸통 에너지 전달 저하', detail: `ETI(P→T) ${summary.etiPT.mean.toFixed(2)}` });
     if (summary.etiTA?.mean < ELITE.etiTA.mid)
@@ -1566,8 +1570,10 @@
       improvements.push({ kind: 'velocity', title: '골반-몸통 분리각 부족', detail: `${summary.maxXFactor.mean.toFixed(1)}°` });
     if (summary.strideRatio?.mean != null && summary.strideRatio.mean < ELITE.strideRatio.lo)
       improvements.push({ kind: 'velocity', title: 'Stride 길이 부족', detail: `${(summary.strideRatio.mean * 100).toFixed(0)}% (엘리트 ${(ELITE.strideRatio.lo * 100).toFixed(0)}~${(ELITE.strideRatio.hi * 100).toFixed(0)}%)` });
-    if (energy.leakRate >= 30)
-      improvements.push({ kind: 'velocity', title: '키네틱 체인 에너지 누수 큼', detail: `종합 누수율 ${energy.leakRate.toFixed(1)}%` });
+    if (summary.armSlotAngle?.mean != null && (summary.armSlotAngle.mean < 50 || summary.armSlotAngle.mean > 110))
+      improvements.push({ kind: 'velocity', title: 'Arm slot 범위 이탈', detail: `${summary.armSlotAngle.mean.toFixed(1)}° (효율 범위 50~110°)` });
+    if (energy.leakRate >= 20)
+      improvements.push({ kind: 'velocity', title: '키네틱 체인 에너지 누수', detail: `종합 누수율 ${energy.leakRate.toFixed(1)}%` });
     // v55 — Driveline-aligned variables (velocity)
     if (summary.leadKneeExtAtBR?.mean != null && summary.leadKneeExtAtBR.mean < 5)
       improvements.push({ kind: 'velocity', title: '앞다리 신전 부족', detail: `BR 시점 ${summary.leadKneeExtAtBR.mean.toFixed(1)}° (엘리트 11°+)` });
@@ -1580,19 +1586,36 @@
       improvements.push({ kind: 'velocity', title: 'Torso Counter Rotation 부족', detail: `${summary.peakTorsoCounterRot.mean.toFixed(0)}° (엘리트 -37°)` });
     if (summary.trunkRotAtFP?.mean != null && summary.trunkRotAtFP.mean > 8)
       improvements.push({ kind: 'velocity', title: 'FP 시점 몸통 조기 회전', detail: `${summary.trunkRotAtFP.mean.toFixed(1)}° (엘리트 2°)` });
-    // Command-related
+    if (summary.trunkForwardTilt?.mean != null && (Math.abs(summary.trunkForwardTilt.mean) < 28 || Math.abs(summary.trunkForwardTilt.mean) > 44))
+      improvements.push({ kind: 'velocity', title: '몸통 전방 기울기 범위 이탈', detail: `${summary.trunkForwardTilt.mean.toFixed(1)}° (엘리트 28~44°)` });
+    // Command-related — v59: relaxed thresholds (good→ok range catches more)
     if (['C','D'].includes(command.overall))
       improvements.push({ kind: 'command', title: '릴리스 일관성 낮음', detail: `종합 등급 ${command.overall}` });
-    if (summary.fcBrMs?.cv != null && summary.fcBrMs.cv > ELITE.cmd_fcBrCvPct.ok)
-      improvements.push({ kind: 'command', title: 'FC→릴리스 타이밍 변동 큼', detail: `CV ${summary.fcBrMs.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_fcBrCvPct.elite}%)` });
-    if (summary.strideLength?.cv != null && summary.strideLength.cv > ELITE.cmd_strideCvPct.ok)
-      improvements.push({ kind: 'command', title: '스트라이드 길이 변동 큼', detail: `CV ${summary.strideLength.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_strideCvPct.elite}%)` });
-    if (summary.maxER?.cv != null && summary.maxER.cv > ELITE.cmd_erCvPct.ok)
-      improvements.push({ kind: 'command', title: 'MER 변동 큼', detail: `CV ${summary.maxER.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_erCvPct.elite}%)` });
-    if (summary.armSlotAngle?.sd != null && summary.armSlotAngle.sd > ELITE.cmd_armSlotSdDeg.ok)
-      improvements.push({ kind: 'command', title: 'Arm slot 변동 큼', detail: `SD ±${summary.armSlotAngle.sd.toFixed(2)}° (엘리트 <${ELITE.cmd_armSlotSdDeg.elite}°)` });
+    if (summary.fcBrMs?.cv != null && summary.fcBrMs.cv > ELITE.cmd_fcBrCvPct.good)
+      improvements.push({ kind: 'command', title: 'FC→릴리스 타이밍 변동 큼', detail: `CV ${summary.fcBrMs.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_fcBrCvPct.elite}%, 양호 <${ELITE.cmd_fcBrCvPct.good}%)` });
+    if (summary.strideLength?.cv != null && summary.strideLength.cv > ELITE.cmd_strideCvPct.good)
+      improvements.push({ kind: 'command', title: '스트라이드 길이 변동 큼', detail: `CV ${summary.strideLength.cv.toFixed(1)}% (양호 <${ELITE.cmd_strideCvPct.good}%)` });
+    if (summary.maxER?.cv != null && summary.maxER.cv > ELITE.cmd_erCvPct.good)
+      improvements.push({ kind: 'command', title: 'MER 변동 큼', detail: `CV ${summary.maxER.cv.toFixed(1)}% (양호 <${ELITE.cmd_erCvPct.good}%)` });
+    if (summary.armSlotAngle?.sd != null && summary.armSlotAngle.sd > ELITE.cmd_armSlotSdDeg.good)
+      improvements.push({ kind: 'command', title: 'Arm slot 변동 큼', detail: `SD ±${summary.armSlotAngle.sd.toFixed(2)}° (양호 <${ELITE.cmd_armSlotSdDeg.good}°)` });
+    if (summary.trunkForwardTilt?.sd != null && summary.trunkForwardTilt.sd > ELITE.cmd_trunkForwardSdDeg.good)
+      improvements.push({ kind: 'command', title: '몸통 기울기 변동 큼', detail: `SD ±${summary.trunkForwardTilt.sd.toFixed(2)}° (양호 <${ELITE.cmd_trunkForwardSdDeg.good}°)` });
+    // v59 — Sequencing & angular velocity consistency (was missing)
+    if (summary.ptLagMs?.cv != null && summary.ptLagMs.cv > 25)
+      improvements.push({ kind: 'command', title: 'P→T 시퀀싱 변동 큼', detail: `CV ${summary.ptLagMs.cv.toFixed(1)}% (엘리트 <15%, 양호 <25%)` });
+    if (summary.taLagMs?.cv != null && summary.taLagMs.cv > 25)
+      improvements.push({ kind: 'command', title: 'T→A 시퀀싱 변동 큼', detail: `CV ${summary.taLagMs.cv.toFixed(1)}% (엘리트 <15%, 양호 <25%)` });
+    if (summary.peakArmVel?.cv != null && summary.peakArmVel.cv > 10)
+      improvements.push({ kind: 'command', title: '팔 각속도 변동 큼', detail: `CV ${summary.peakArmVel.cv.toFixed(1)}% (양호 <10%)` });
+    if (summary.peakTrunkVel?.cv != null && summary.peakTrunkVel.cv > 10)
+      improvements.push({ kind: 'command', title: '몸통 각속도 변동 큼', detail: `CV ${summary.peakTrunkVel.cv.toFixed(1)}% (양호 <10%)` });
+    if (summary.peakPelvisVel?.cv != null && summary.peakPelvisVel.cv > 10)
+      improvements.push({ kind: 'command', title: '골반 각속도 변동 큼', detail: `CV ${summary.peakPelvisVel.cv.toFixed(1)}% (양호 <10%)` });
+    if (summary.maxXFactor?.cv != null && summary.maxXFactor.cv > 14)
+      improvements.push({ kind: 'command', title: 'X-factor 변동 큼', detail: `CV ${summary.maxXFactor.cv.toFixed(1)}% (양호 <14%)` });
     // v55 — fault factors removed from display (per user request, no injury PART)
-    return { strengths: strengths.slice(0, 6), improvements: improvements.slice(0, 10) };
+    return { strengths: strengths.slice(0, 6), improvements: improvements.slice(0, 15) };
   }
 
   function analyze(input) {
