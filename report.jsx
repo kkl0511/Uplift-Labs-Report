@@ -2143,6 +2143,94 @@
     return btoa(bin);
   }
 
+  // v75 — Upload via GitHub Releases API
+  // Releases assets can be up to 2GB and have no JSON request body size limit
+  // (raw binary upload). This is the most reliable way for any file > 5MB.
+  //
+  // Strategy:
+  //   1. Get or create a "reports-videos" release (single release reused for all videos)
+  //   2. If asset with same name exists, delete it first (to allow re-upload)
+  //   3. Upload video as asset (raw binary, not base64)
+  //   4. Return the asset's browser_download_url for the report to fetch later
+  async function uploadVideoToReleases(blob, assetName, { owner, repo }, token) {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
+    const tagName = 'reports-videos';
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+    const jsonHeaders = { ...headers, 'Content-Type': 'application/json' };
+
+    // Step 1: Get or create the release
+    let release = null;
+    const getRes = await fetch(`${apiUrl}/releases/tags/${tagName}`, { headers });
+    if (getRes.ok) {
+      release = await getRes.json();
+    } else if (getRes.status === 404) {
+      // Create a new release
+      const createRes = await fetch(`${apiUrl}/releases`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          tag_name: tagName,
+          name: 'Report Videos (auto)',
+          body: 'Automatically managed video assets for shared pitcher reports. Do not delete.',
+          draft: false,
+          prerelease: false
+        })
+      });
+      if (!createRes.ok) {
+        let detail = '';
+        try { const j = await createRes.json(); detail = j.message || JSON.stringify(j); } catch (e) {}
+        throw new Error(`Releases API [1. Release 생성] 실패 (${createRes.status}): ${detail}`);
+      }
+      release = await createRes.json();
+    } else {
+      let detail = '';
+      try { const j = await getRes.json(); detail = j.message || JSON.stringify(j); } catch (e) {}
+      throw new Error(`Releases API [1. Release 조회] 실패 (${getRes.status}): ${detail}`);
+    }
+
+    // Step 2: Delete existing asset with same name (if any)
+    const existingAsset = (release.assets || []).find(a => a.name === assetName);
+    if (existingAsset) {
+      try {
+        await fetch(`${apiUrl}/releases/assets/${existingAsset.id}`, {
+          method: 'DELETE',
+          headers
+        });
+      } catch (e) {
+        // Non-fatal — try upload anyway, GitHub may handle name collision
+      }
+    }
+
+    // Step 3: Upload the asset (raw binary)
+    // Asset uploads use a different host: uploads.github.com
+    const uploadUrl = release.upload_url.replace('{?name,label}', `?name=${encodeURIComponent(assetName)}`);
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': blob.type || 'application/octet-stream'
+      },
+      body: blob  // raw binary, not base64!
+    });
+    if (!uploadRes.ok) {
+      let detail = '';
+      try { const j = await uploadRes.json(); detail = j.message || JSON.stringify(j); } catch (e) {}
+      throw new Error(`Releases API [3. Asset 업로드] 실패 (${uploadRes.status}): ${detail}`);
+    }
+    const asset = await uploadRes.json();
+    return {
+      url: asset.browser_download_url,
+      assetId: asset.id,
+      size: asset.size
+    };
+  }
+
   // v69 — Generic helper: upload one file to GitHub Contents API (handles update + create)
   // Contents API limits: ~50MB per file, ~100MB JSON payload (entire request)
   async function uploadFileToGithub(path, base64Content, commitMessage, { owner, repo, branch }, token) {
@@ -2308,42 +2396,77 @@
   async function uploadReportToGithub(payload, { owner, repo, branch }, token) {
     const id = makeReportId(payload.pitcher);
 
-    // v69 — If payload has an embedded video (base64 in payload.video.base64),
-    // upload it as a separate file to avoid GitHub Contents API 50MB limit on the JSON.
-    // Replace the embedded base64 with a path reference.
+    // v75 — Upload video via GitHub Releases API (raw binary, no size limit unlike Contents/Git Data API)
+    // Releases assets support up to 2GB, no JSON request body limit, and the resulting URL is publicly accessible.
     let videoUploadResult = null;
-    if (payload.video && payload.video.base64) {
+    if (payload.video && payload.video.blob) {
       const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
-      const videoPath = `reports/videos/${id}.${videoExt}`;
+      const assetName = `${id}.${videoExt}`;
       try {
-        // v71 — Use smart uploader: Git Data API for large files, Contents API for small
-        videoUploadResult = await uploadFileToGithubSmart(
-          videoPath,
-          payload.video.base64,
-          `Update video for ${id}`,
-          { owner, repo, branch },
+        console.log(`[Upload] Video via Releases API: ${assetName} (${(payload.video.size/1024/1024).toFixed(1)}MB)`);
+        const release = await uploadVideoToReleases(
+          payload.video.blob,
+          assetName,
+          { owner, repo },
           token
         );
-        // Replace embedded base64 with path reference (slim payload)
+        console.log(`[Upload] Video uploaded:`, release.url);
+        videoUploadResult = release;
+        // Replace embedded blob with URL reference (slim payload)
         payload = {
           ...payload,
           video: {
-            path: videoPath,
+            releaseUrl: release.url,        // v75: direct download URL from Releases
+            assetId: release.assetId,
             filename: payload.video.filename,
             size: payload.video.size,
             mimeType: payload.video.mimeType
-            // base64 removed — fetched separately at runtime
+            // blob/base64 removed — fetched from releaseUrl at runtime
           }
         };
       } catch (e) {
-        // v74 — Show the actual exception detail prominently — no more generic "GitHub 한도 초과"
+        // v75 — Show the actual exception detail with diagnosis
         const sizeMB = (payload.video.size / 1024 / 1024).toFixed(1);
-        const baseMsg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[v74 진단]\n• 코드는 5MB 이상 파일에 자동으로 Git Data API를 사용합니다.\n• 위 에러 첫 줄이 "Git Data API [N. ...]"이면 Git Data API에서 실패한 것.\n• 위 에러 첫 줄이 "GitHub 업로드 실패"이면 Contents API에서 실패한 것 (코드가 v71 미만임).`;
-        const guideMsg = `\n\n[해결 방법]\n1. 콘솔(F12 → Console 탭)에서 [Upload] 로그를 확인하세요.\n   "Using Git Data API"가 출력되었나요?\n2. GitHub 토큰 권한 확인 — fine-grained 토큰의 경우 "Contents: Read and write" 필수.\n3. 영상을 더 작게 압축 (HandBrake 또는 freeconvert.com).\n\n지금 영상 없이 게시할까요?\n(확인) 영상 없이 게시 — 분석 결과만 업로드\n(취소) 중단 — 토큰/영상 점검 후 재시도`;
+        const baseMsg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[v75 진단]\n• v75는 GitHub Releases API를 사용합니다 (2GB까지 가능).\n• 위 에러가 "Releases API [N. ...]" 형태면 Releases API 자체가 실패.\n• 가장 흔한 원인: 토큰 권한 부족 (Contents: write 필요).`;
+        const guideMsg = `\n\n[해결 방법]\n1. GitHub 토큰 권한 확인:\n   • Fine-grained: "Contents: Read and write" + "Metadata: Read-only"\n   • Classic: "repo" 전체 scope\n2. 콘솔(F12)에서 [Upload] 로그 확인.\n\n지금 영상 없이 게시할까요?\n(확인) 영상 없이 게시\n(취소) 중단 — 토큰 점검 후 재시도`;
         console.warn(baseMsg);
         const proceed = (typeof confirm !== 'undefined') ? confirm(baseMsg + guideMsg) : true;
         if (!proceed) {
-          throw new Error('사용자 취소 — 영상/토큰 점검 후 다시 시도하세요');
+          throw new Error('사용자 취소 — 토큰 점검 후 다시 시도하세요');
+        }
+        payload = { ...payload, video: null };
+      }
+    } else if (payload.video && payload.video.base64) {
+      // v75 — Legacy path: payload still has base64 (from older buildPayload)
+      // Convert base64 → Blob and upload via Releases
+      const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
+      const assetName = `${id}.${videoExt}`;
+      try {
+        const byteString = atob(payload.video.base64);
+        const bytes = new Uint8Array(byteString.length);
+        for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+        const blob = new Blob([bytes], { type: payload.video.mimeType || 'video/mp4' });
+        console.log(`[Upload] Video via Releases API (legacy base64 path): ${assetName} (${(blob.size/1024/1024).toFixed(1)}MB)`);
+        const release = await uploadVideoToReleases(blob, assetName, { owner, repo }, token);
+        videoUploadResult = release;
+        payload = {
+          ...payload,
+          video: {
+            releaseUrl: release.url,
+            assetId: release.assetId,
+            filename: payload.video.filename,
+            size: payload.video.size,
+            mimeType: payload.video.mimeType
+          }
+        };
+      } catch (e) {
+        const sizeMB = (payload.video.size / 1024 / 1024).toFixed(1);
+        const baseMsg = `영상 업로드 실패 (${sizeMB}MB)\n\n[정확한 에러]\n${e.message}\n\n[v75 진단]\n• v75는 GitHub Releases API를 사용합니다 (2GB까지 가능).\n• 토큰 권한이나 네트워크 문제일 가능성.`;
+        const guideMsg = `\n\n[해결 방법]\n1. GitHub 토큰 권한 확인:\n   • Fine-grained: "Contents: Read and write"\n   • Classic: "repo" 전체 scope\n\n지금 영상 없이 게시할까요?`;
+        console.warn(baseMsg);
+        const proceed = (typeof confirm !== 'undefined') ? confirm(baseMsg + guideMsg) : true;
+        if (!proceed) {
+          throw new Error('사용자 취소 — 토큰 점검 후 다시 시도하세요');
         }
         payload = { ...payload, video: null };
       }
@@ -2460,29 +2583,16 @@
     //   - trials with .data: so v60 client-side recompute fills in any
     //     newly-added variables in future versions without re-publishing
     const buildPayload = async () => {
-      // Encode video to base64 if present
+      // v75 — Pass blob directly (not base64). Releases API uploads raw binary,
+      // so we skip the expensive and size-bloating base64 encoding step.
       let videoData = null;
       if (videoBlob && (videoBlob instanceof Blob || videoBlob instanceof File)) {
-        try {
-          const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const result = reader.result;
-              const idx = result.indexOf(',');
-              resolve(idx >= 0 ? result.slice(idx + 1) : result);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(videoBlob);
-          });
-          videoData = {
-            filename: videoBlob.name || pitcher?.videoFilename || 'video.mp4',
-            size: videoBlob.size,
-            mimeType: videoBlob.type || pitcher?.videoMimeType || 'video/mp4',
-            base64
-          };
-        } catch (e) {
-          console.warn('Failed to encode video for share, continuing without it:', e);
-        }
+        videoData = {
+          filename: videoBlob.name || pitcher?.videoFilename || 'video.mp4',
+          size: videoBlob.size,
+          mimeType: videoBlob.type || pitcher?.videoMimeType || 'video/mp4',
+          blob: videoBlob   // ← v75: raw Blob, will be replaced with releaseUrl after upload
+        };
       }
       // Include trials with raw .data so future client-side recompute can fill new variables.
       // Strip per-trial videoBlob (we keep only the main video) and other heavy non-essential refs.
@@ -2754,12 +2864,25 @@
       const v = sharedPayload?.video;
       if (!v) return;
 
-      // v69 — New format: video stored as separate file at v.path. Fetch it and convert to Blob.
+      // v75 — Preferred format: video at GitHub Releases URL (raw binary, no size limit)
+      if (v.releaseUrl) {
+        (async () => {
+          try {
+            const res = await fetch(v.releaseUrl, { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            setVideoBlob(blob);
+          } catch (e) {
+            console.warn('Failed to fetch video from Releases URL:', e);
+          }
+        })();
+        return;
+      }
+
+      // v69 — Old format: video stored as separate file at v.path in repo (Contents API)
       if (v.path && !v.base64) {
         (async () => {
           try {
-            // Build the URL relative to the current GitHub Pages site root
-            // window.location.pathname is e.g. "/Uplift-Labs-Report/" — combine with v.path
             const baseUrl = `${window.location.origin}${window.location.pathname}`.replace(/\/$/, '/');
             const videoUrl = `${baseUrl}${v.path}`;
             const res = await fetch(videoUrl, { cache: 'no-cache' });
@@ -3059,7 +3182,7 @@
             <div>
               <div className="text-blue-300 text-[10.5px] tracking-[0.25em] font-bold mb-1">
                 BBL · PITCHER REPORT
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v74</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v75</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">{pitcher.name || '—'}</h1>
               <div className="text-blue-200/80 text-[12px] mt-1.5 flex items-center gap-3">
