@@ -2457,61 +2457,73 @@
     const id = makeReportId(payload.pitcher);
 
     // ============================================================
-    // v76 — Smart video handling with three paths:
-    //   PATH 1: External URL (YouTube/Vimeo/Drive) — included in JSON, no upload
-    //   PATH 2: Existing GitHub video — fetch existing JSON, preserve video reference
-    //   PATH 3: New video blob — try to upload (will likely fail due to GitHub limits)
+    // v81 — Smart video handling, three paths in priority order:
+    //   PATH 1: External URL (YouTube/Vimeo/Drive) — included in JSON, no upload needed
+    //   PATH 2: Existing GitHub video — preserve reference if no new external URL
+    //   PATH 3: New blob — try Releases API (often fails due to CORS), prompt user
     // ============================================================
     let videoUploadResult = null;
-    let videoNote = '';  // Status message for the user
+    let videoNote = '';
+    let existingVideoRef = null;  // v81 — Cached existing video reference for fallback
 
-    // --- PATH 1: External URL provided (preferred) ---
-    if (payload.pitcher?.videoExternalUrl) {
-      const url = payload.pitcher.videoExternalUrl.trim();
-      if (url) {
-        payload = {
-          ...payload,
-          video: {
-            externalUrl: url,
-            filename: 'external-video',
-            mimeType: 'external'
-          }
-        };
-        videoNote = '외부 영상 URL';
-        console.log(`[Upload] Using external video URL: ${url}`);
-      }
-    }
-
-    // --- PATH 2: No new external URL, but existing JSON might already have a video ---
-    // Check if a JSON already exists in the repo and has a working video reference.
-    // If yes, preserve it (don't waste effort re-uploading the same video).
-    if (!payload.video && payload.video !== null) {
+    // --- PATH 1: External URL provided (preferred — fastest, most reliable) ---
+    const externalUrlInput = payload.pitcher?.videoExternalUrl?.trim();
+    if (externalUrlInput) {
+      payload = {
+        ...payload,
+        video: {
+          externalUrl: externalUrlInput,
+          filename: 'external-video',
+          mimeType: 'external'
+        }
+      };
+      videoNote = '외부 영상 URL';
+      console.log(`[Upload] Using external video URL: ${externalUrlInput}`);
+    } else {
+      // --- PATH 2: Check for existing GitHub video to preserve ---
+      // (Only when external URL is not provided — external URL always wins)
       try {
         const existingApiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/reports/${id}.json?ref=${encodeURIComponent(branch)}`;
         const existingRes = await fetch(existingApiUrl, {
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.github.raw+json',
+            'Accept': 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28'
           }
         });
         if (existingRes.ok) {
-          const existingJson = await existingRes.json();
-          if (existingJson.video && (existingJson.video.releaseUrl || existingJson.video.path || existingJson.video.base64 || existingJson.video.externalUrl)) {
-            // Preserve existing video reference
-            payload = { ...payload, video: existingJson.video };
-            videoNote = '기존 영상 유지';
-            console.log(`[Upload] Preserving existing video reference from ${id}.json`);
+          const meta = await existingRes.json();
+          // Decode base64 content (Contents API returns content base64-encoded)
+          if (meta.content) {
+            try {
+              // base64 → bytes → UTF-8 string → JSON
+              const bin = atob(meta.content.replace(/\s/g, ''));
+              const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              const text = new TextDecoder('utf-8').decode(bytes);
+              const existingJson = JSON.parse(text);
+              if (existingJson.video && (existingJson.video.releaseUrl || existingJson.video.path || existingJson.video.base64 || existingJson.video.externalUrl)) {
+                existingVideoRef = existingJson.video;
+                console.log(`[Upload] Found existing video reference in ${id}.json — will preserve unless user uploads new video`);
+              }
+            } catch (decodeErr) {
+              console.log(`[Upload] Could not decode existing JSON content (this is fine for new reports):`, decodeErr.message);
+            }
           }
         }
       } catch (e) {
-        console.log(`[Upload] No existing JSON to preserve video from (this is fine for new reports):`, e.message);
+        console.log(`[Upload] Existing JSON check failed (this is fine for new reports):`, e.message);
+      }
+
+      // If we found an existing video reference AND user didn't upload a new blob,
+      // preserve the existing reference (黄정윤 case: video already on GitHub).
+      if (existingVideoRef && !payload.video?.blob) {
+        payload = { ...payload, video: existingVideoRef };
+        videoNote = '기존 영상 유지';
       }
     }
 
-    // --- PATH 3: New blob provided (fallback, may fail due to GitHub limits) ---
-    // Only try this if we don't already have a video reference from PATH 1 or 2,
-    // AND the user actually provided a new blob.
+    // --- PATH 3: New blob provided (fallback, may fail due to GitHub CORS limits) ---
     if (!payload.video?.externalUrl && !payload.video?.releaseUrl && !payload.video?.path && !payload.video?.base64
         && payload.video?.blob) {
       const videoExt = (payload.video.mimeType?.split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '');
@@ -2545,8 +2557,17 @@
         if (!proceed) {
           throw new Error('사용자 취소 — 외부 URL 입력 후 다시 시도하세요');
         }
-        payload = { ...payload, video: null };
-        videoNote = '영상 제외';
+        // v81 — User chose "publish without video": preserve existing GitHub video if available,
+        // otherwise set video to null. This prevents overwriting an already-uploaded video
+        // (e.g. 황정윤's case where a video exists from an earlier session).
+        if (existingVideoRef) {
+          payload = { ...payload, video: existingVideoRef };
+          videoNote = '기존 영상 유지 (새 영상 업로드 실패)';
+          console.log(`[Upload] Falling back to existing GitHub video reference`);
+        } else {
+          payload = { ...payload, video: null };
+          videoNote = '영상 제외';
+        }
       }
     } else if (payload.video?.blob) {
       // Has both blob AND existing reference — strip blob, keep reference
@@ -2556,7 +2577,28 @@
 
     // Now upload the JSON (much smaller without embedded video)
     const path = `reports/${id}.json`;
-    const json = JSON.stringify(payload);
+    let json = JSON.stringify(payload);
+    let jsonSizeMB = (new Blob([json]).size / 1024 / 1024).toFixed(2);
+    console.log(`[Upload] JSON size: ${jsonSizeMB}MB`);
+
+    // v81 — If JSON is too large for Contents API (>5MB), strip the bulky trials[].data field.
+    // trials.data enables v60 client-side recompute but is the largest contributor to JSON size.
+    // We can drop it safely — the report still works, just without auto-recompute on view.
+    if (parseFloat(jsonSizeMB) > 4.5 && payload.trials && payload.trials.length > 0) {
+      const slimPayload = {
+        ...payload,
+        trials: payload.trials.map(t => {
+          const { data, ...rest } = t;
+          return rest;
+        })
+      };
+      const slimJson = JSON.stringify(slimPayload);
+      const slimSizeMB = (new Blob([slimJson]).size / 1024 / 1024).toFixed(2);
+      console.log(`[Upload] JSON shrunk by stripping trials.data: ${jsonSizeMB}MB → ${slimSizeMB}MB`);
+      json = slimJson;
+      jsonSizeMB = slimSizeMB;
+    }
+
     // v71 — Use smart uploader to handle JSONs larger than 5MB (e.g. when trials.data is included)
     const result = await uploadFileToGithubSmart(
       path,
@@ -2565,7 +2607,7 @@
       { owner, repo, branch },
       token
     );
-    return { id, isUpdate: result.isUpdate, videoUploaded: !!videoUploadResult };
+    return { id, isUpdate: result.isUpdate, videoUploaded: !!videoUploadResult, videoNote };
   }
 
   function GitHubTokenSetupModal({ initialConfig, onSave, onClose }) {
@@ -3272,7 +3314,7 @@
             <div>
               <div className="text-blue-300 text-[10.5px] tracking-[0.25em] font-bold mb-1">
                 BBL · PITCHER REPORT
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v80</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v81</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">{pitcher.name || '—'}</h1>
               <div className="text-blue-200/80 text-[12px] mt-1.5 flex items-center gap-3">
