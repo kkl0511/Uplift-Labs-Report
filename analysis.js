@@ -64,6 +64,10 @@
     //   Driveline elite median: 1.61 m/s decrease from peak to BR
     //   Higher = stronger block (better energy transfer to upper body)
     cogDecel:        { good: 1.2, elite: 1.6, unit: 'm/s' },
+    // v57 — NEW: Peak Torso Counter Rotation (Driveline med importance)
+    //   Driveline elite median: -37° · Per 1mph: 13°
+    //   More negative = better wind-up (closed coiled position)
+    peakTorsoCounterRot: { good: -25, elite: -37, unit: '°' },
     // ── New energy-leak indicators ───────────────────────────────────────
     // Flying open: % of total trunk rotation already completed by FC.
     // 0% = perfectly closed (ideal); 100% = already at release rotation.
@@ -1180,6 +1184,21 @@
       if (rotAtBR != null) trunkRotAtBR = rotAtBR;
     }
 
+    // (2b) v57 — Peak Torso Counter Rotation (최대 반대 꼬임)
+    //   Driveline: elite median -37°, Per 1mph: 13°
+    //   Most-closed trunk position before delivery — negative = wound away from
+    //   home plate (good loading). The lower (more negative), the more potential
+    //   energy stored in the torso for unwinding.
+    let peakTorsoCounterRot = null;
+    {
+      let mostClosedRot = Infinity;
+      for (let i = 0; i <= brRow; i++) {
+        const v = rows[i]?.trunk_global_rotation;
+        if (v != null && v < mostClosedRot) mostClosedRot = v;
+      }
+      if (isFinite(mostClosedRot)) peakTorsoCounterRot = mostClosedRot;
+    }
+
     // (3) Peak CoG Velocity & Decel (무게중심 최고속도/감속)
     //   Driveline: Max CoG Velo elite 2.84 m/s · CoG Decel elite 1.61 m/s
     //   Computed from pelvis joint center as proxy for CoG (sufficient for
@@ -1259,6 +1278,8 @@
       // v54 — NEW Driveline-aligned variables
       leadKneeExtAtBR, trunkRotAtFP, trunkRotAtBR,
       peakCogVel, cogDecel, trunkLateralTiltAtBR,
+      // v57 — Driveline counter rotation
+      peakTorsoCounterRot,
       wristHeight, armSlotAngle, armSlotType,
       frontKneeFlex,
       // Segment kinetic energy (estimation-based, requires height + mass)
@@ -1534,25 +1555,44 @@
       strengths.push({ title: 'Stride 길이 우수', detail: `${(summary.strideRatio.mean * 100).toFixed(0)}% of body height` });
 
     if (summary.peakArmVel?.mean < ELITE.peakArm.good)
-      improvements.push({ title: '팔 가속 능력 부족', detail: `peak arm ω ${summary.peakArmVel.mean.toFixed(0)} °/s (엘리트 ${ELITE.peakArm.elite}+)` });
+      improvements.push({ kind: 'velocity', title: '팔 가속 능력 부족', detail: `peak arm ω ${summary.peakArmVel.mean.toFixed(0)} °/s (엘리트 ${ELITE.peakArm.elite}+)` });
     if (summary.etiPT?.mean < ELITE.etiPT.mid)
-      improvements.push({ title: '골반→몸통 에너지 전달 저하', detail: `ETI(P→T) ${summary.etiPT.mean.toFixed(2)}` });
+      improvements.push({ kind: 'velocity', title: '골반→몸통 에너지 전달 저하', detail: `ETI(P→T) ${summary.etiPT.mean.toFixed(2)}` });
     if (summary.etiTA?.mean < ELITE.etiTA.mid)
-      improvements.push({ title: '몸통→팔 에너지 전달 저하', detail: `ETI(T→A) ${summary.etiTA.mean.toFixed(2)}` });
+      improvements.push({ kind: 'velocity', title: '몸통→팔 에너지 전달 저하', detail: `ETI(T→A) ${summary.etiTA.mean.toFixed(2)}` });
     if (summary.maxER?.mean != null && summary.maxER.mean < ELITE.maxER.lo)
-      improvements.push({ title: 'Max ER(MER) 부족', detail: `${summary.maxER.mean.toFixed(0)}° (엘리트 ${ELITE.maxER.lo}~${ELITE.maxER.hi}°)` });
+      improvements.push({ kind: 'velocity', title: 'Max ER(MER) 부족', detail: `${summary.maxER.mean.toFixed(0)}° (엘리트 ${ELITE.maxER.lo}~${ELITE.maxER.hi}°)` });
     if (summary.maxXFactor?.mean < ELITE.maxXFactor.lo)
-      improvements.push({ title: '골반-몸통 분리각 부족', detail: `${summary.maxXFactor.mean.toFixed(1)}°` });
+      improvements.push({ kind: 'velocity', title: '골반-몸통 분리각 부족', detail: `${summary.maxXFactor.mean.toFixed(1)}°` });
     if (summary.strideRatio?.mean != null && summary.strideRatio.mean < ELITE.strideRatio.lo)
-      improvements.push({ title: 'Stride 길이 부족', detail: `${(summary.strideRatio.mean * 100).toFixed(0)}% (엘리트 ${(ELITE.strideRatio.lo * 100).toFixed(0)}~${(ELITE.strideRatio.hi * 100).toFixed(0)}%)` });
+      improvements.push({ kind: 'velocity', title: 'Stride 길이 부족', detail: `${(summary.strideRatio.mean * 100).toFixed(0)}% (엘리트 ${(ELITE.strideRatio.lo * 100).toFixed(0)}~${(ELITE.strideRatio.hi * 100).toFixed(0)}%)` });
     if (energy.leakRate >= 30)
-      improvements.push({ title: '키네틱 체인 에너지 누수 큼', detail: `종합 누수율 ${energy.leakRate.toFixed(1)}%` });
+      improvements.push({ kind: 'velocity', title: '키네틱 체인 에너지 누수 큼', detail: `종합 누수율 ${energy.leakRate.toFixed(1)}%` });
+    // v55 — Driveline-aligned variables (velocity)
+    if (summary.leadKneeExtAtBR?.mean != null && summary.leadKneeExtAtBR.mean < 5)
+      improvements.push({ kind: 'velocity', title: '앞다리 신전 부족', detail: `BR 시점 ${summary.leadKneeExtAtBR.mean.toFixed(1)}° (엘리트 11°+)` });
+    if (summary.cogDecel?.mean != null && summary.cogDecel.mean < 1.2)
+      improvements.push({ kind: 'velocity', title: 'CoG 감속(블록) 부족', detail: `${summary.cogDecel.mean.toFixed(2)} m/s (엘리트 1.6+)` });
+    if (summary.peakCogVel?.mean != null && summary.peakCogVel.mean < 2.4)
+      improvements.push({ kind: 'velocity', title: 'CoG 최고 속도 부족', detail: `${summary.peakCogVel.mean.toFixed(2)} m/s (엘리트 2.84)` });
+    // v57 — Posture model variables
+    if (summary.peakTorsoCounterRot?.mean != null && summary.peakTorsoCounterRot.mean > -25)
+      improvements.push({ kind: 'velocity', title: 'Torso Counter Rotation 부족', detail: `${summary.peakTorsoCounterRot.mean.toFixed(0)}° (엘리트 -37°)` });
+    if (summary.trunkRotAtFP?.mean != null && summary.trunkRotAtFP.mean > 8)
+      improvements.push({ kind: 'velocity', title: 'FP 시점 몸통 조기 회전', detail: `${summary.trunkRotAtFP.mean.toFixed(1)}° (엘리트 2°)` });
+    // Command-related
     if (['C','D'].includes(command.overall))
-      improvements.push({ title: '릴리스 일관성 낮음', detail: `종합 등급 ${command.overall}` });
-    factors.filter(f => f.grade === 'D').forEach(f => {
-      improvements.push({ title: `${f.name} 등급 D`, detail: f.signals.join(' · ') });
-    });
-    return { strengths: strengths.slice(0, 6), improvements: improvements.slice(0, 6) };
+      improvements.push({ kind: 'command', title: '릴리스 일관성 낮음', detail: `종합 등급 ${command.overall}` });
+    if (summary.fcBrMs?.cv != null && summary.fcBrMs.cv > ELITE.cmd_fcBrCvPct.ok)
+      improvements.push({ kind: 'command', title: 'FC→릴리스 타이밍 변동 큼', detail: `CV ${summary.fcBrMs.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_fcBrCvPct.elite}%)` });
+    if (summary.strideLength?.cv != null && summary.strideLength.cv > ELITE.cmd_strideCvPct.ok)
+      improvements.push({ kind: 'command', title: '스트라이드 길이 변동 큼', detail: `CV ${summary.strideLength.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_strideCvPct.elite}%)` });
+    if (summary.maxER?.cv != null && summary.maxER.cv > ELITE.cmd_erCvPct.ok)
+      improvements.push({ kind: 'command', title: 'MER 변동 큼', detail: `CV ${summary.maxER.cv.toFixed(1)}% (엘리트 <${ELITE.cmd_erCvPct.elite}%)` });
+    if (summary.armSlotAngle?.sd != null && summary.armSlotAngle.sd > ELITE.cmd_armSlotSdDeg.ok)
+      improvements.push({ kind: 'command', title: 'Arm slot 변동 큼', detail: `SD ±${summary.armSlotAngle.sd.toFixed(2)}° (엘리트 <${ELITE.cmd_armSlotSdDeg.elite}°)` });
+    // v55 — fault factors removed from display (per user request, no injury PART)
+    return { strengths: strengths.slice(0, 6), improvements: improvements.slice(0, 10) };
   }
 
   function analyze(input) {
@@ -1618,6 +1658,7 @@
       peakCogVel:         agg(perTrialStats.map(s => s.peakCogVel)),
       cogDecel:           agg(perTrialStats.map(s => s.cogDecel)),
       trunkLateralTiltAtBR: agg(perTrialStats.map(s => s.trunkLateralTiltAtBR)),
+      peakTorsoCounterRot:  agg(perTrialStats.map(s => s.peakTorsoCounterRot)),
       wristHeight:       agg(perTrialStats.map(s => s.wristHeight)),
       frontKneeFlex:     agg(perTrialStats.map(s => s.frontKneeFlex)),
       flyingOpenPct:     agg(perTrialStats.map(s => s.flyingOpenPct)),
