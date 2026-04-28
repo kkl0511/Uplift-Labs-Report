@@ -999,6 +999,7 @@
     const K = {
       head:     [470, 115],
       neck:     [478, 153],
+      trunkC:   [482, 224],   // v78 — trunk center (mid-spine, between pelvis and shoulders) for energy path
       rShoulder:[520, 177],
       lShoulder:[438, 173],
       rElbow:   [580, 177],   // horizontal upper arm (level with shoulder)
@@ -1039,7 +1040,7 @@
     `;
     const energyPathUpperChain = `
       M ${K.pelvisC[0]} ${K.pelvisC[1]}
-      L ${K.neck[0]} ${K.neck[1] + 5}
+      L ${K.trunkC[0]} ${K.trunkC[1]}
       L ${K.rShoulder[0]} ${K.rShoulder[1]}
       L ${K.rElbow[0]} ${K.rElbow[1]}
       L ${K.rWrist[0]} ${K.rWrist[1]}
@@ -1048,7 +1049,7 @@
 
     return (
       <div className="energy-silhouette">
-        <svg viewBox="0 0 800 540" className="silhouette-svg" role="img" aria-label="키네틱 체인 통합 마네킹">
+        <svg viewBox="0 0 800 560" className="silhouette-svg" role="img" aria-label="키네틱 체인 통합 마네킹">
           <defs>
             <linearGradient id={`ik-bg-${uid}`} x1="0" x2="0" y1="0" y2="1">
               <stop offset="0" stopColor="#0b1220" stopOpacity="0"/>
@@ -1129,7 +1130,7 @@
           </defs>
 
           {/* Background + ground + foot shadow */}
-          <rect x="0" y="0" width="800" height="540" fill={`url(#ik-bg-${uid})`}/>
+          <rect x="0" y="0" width="800" height="560" fill={`url(#ik-bg-${uid})`}/>
           <line x1="40" y1="498" x2="760" y2="498" stroke="#2a3a5a" strokeWidth="1.5" strokeDasharray="3 6"/>
           <ellipse cx={(K.lAnkle[0] + K.rAnkle[0]) / 2} cy="508" rx="180" ry="12" fill={`url(#ik-aoShadow-${uid})`}/>
 
@@ -1251,12 +1252,12 @@
               {/* Leak indicators on stages with weak transfer */}
               {ptLeak && (
                 <g>
-                  <circle cx={(K.pelvisC[0] + K.neck[0]) / 2} cy={(K.pelvisC[1] + K.neck[1]) / 2 - 10} r="38" fill={`url(#ik-leak-${uid})`}>
+                  <circle cx={(K.pelvisC[0] + K.trunkC[0]) / 2} cy={(K.pelvisC[1] + K.trunkC[1]) / 2} r="38" fill={`url(#ik-leak-${uid})`}>
                     <animate attributeName="r" values="32;42;32" dur="1.4s" repeatCount="indefinite"/>
                     <animate attributeName="opacity" values="0.85;0.45;0.85" dur="1.4s" repeatCount="indefinite"/>
                   </circle>
-                  <text x={(K.pelvisC[0] + K.neck[0]) / 2} cy={(K.pelvisC[1] + K.neck[1]) / 2 - 10}
-                        y={(K.pelvisC[1] + K.neck[1]) / 2 - 4}
+                  <text x={(K.pelvisC[0] + K.trunkC[0]) / 2}
+                        y={(K.pelvisC[1] + K.trunkC[1]) / 2 + 4}
                         fill="#fef2f2" fontSize="10" fontWeight="700" textAnchor="middle">⚠ 누수</text>
                 </g>
               )}
@@ -1398,13 +1399,14 @@
             </g>
           )}
 
-          {/* FRONT-FOOT BLOCK — bottom right anchor for stride foot */}
+          {/* v78 — FRONT-FOOT BLOCK — repositioned next to stride foot (was at right edge, far from foot)
+              The stride foot (lAnkle=[310,487], lToe=[268,489]) sits in lower-left of the figure.
+              Block placed at lower-right of viewBox so it sits NEAR the foot without covering it. */}
           <g>
-            <line x1={K.lAnkle[0] + 8} y1={K.lAnkle[1] - 12} x2="612" y2="448" stroke="#22d3ee" strokeWidth="1.2" strokeDasharray="2 3" opacity="0.6"/>
-            <rect x="588" y="420" width="184" height="62" rx="6" fill="#0b1220" stroke="#22d3ee" strokeOpacity="0.6"/>
-            <text x="680" y="436" fill="#22d3ee" fontSize="11" fontWeight="700" textAnchor="middle" letterSpacing="0.4">디딤발 블록</text>
-            <text x="680" y="456" fill="#e2e8f0" fontSize="13" fontWeight="700" textAnchor="middle">에너지 시작점</text>
-            <text x="680" y="472" fill="#22d3ee" fontSize="10" textAnchor="middle">지면 반력 → 골반 회전</text>
+            <line x1={K.lAnkle[0] + 18} y1={K.lAnkle[1] + 4} x2="500" y2="514" stroke="#22d3ee" strokeWidth="1.2" strokeDasharray="2 3" opacity="0.6"/>
+            <rect x="496" y="500" width="220" height="42" rx="6" fill="#0b1220" stroke="#22d3ee" strokeOpacity="0.6"/>
+            <text x="606" y="516" fill="#22d3ee" fontSize="10" fontWeight="700" textAnchor="middle" letterSpacing="0.4">디딤발 블록 — 에너지 시작점</text>
+            <text x="606" y="532" fill="#22d3ee" fontSize="9.5" textAnchor="middle">지면 반력 → 골반 회전</text>
           </g>
 
           {/* === Joint markers (key kinematic points) === */}

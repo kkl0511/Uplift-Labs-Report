@@ -3272,7 +3272,7 @@
             <div>
               <div className="text-blue-300 text-[10.5px] tracking-[0.25em] font-bold mb-1">
                 BBL · PITCHER REPORT
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v77</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v78</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">{pitcher.name || '—'}</h1>
               <div className="text-blue-200/80 text-[12px] mt-1.5 flex items-center gap-3">

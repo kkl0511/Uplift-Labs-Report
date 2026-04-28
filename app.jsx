@@ -1025,7 +1025,7 @@ function PitcherInputForm({ onOpenReport } = {}) {
             <div>
               <div className="text-blue-300 text-[10px] tracking-[0.25em] font-semibold mb-1">
                 BBL · BIOMOTION BASEBALL LAB
-                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v77</span>
+                <span className="text-blue-300/40 ml-2 tracking-normal" style={{ fontSize: 9 }}>v78</span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight">투수 정보 입력</h1>
               <div className="text-blue-200/70 text-xs mt-1">
